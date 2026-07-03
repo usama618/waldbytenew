@@ -1,0 +1,43 @@
+tt_content.hero =< lib.contentElement
+tt_content.hero {
+  templateName = Hero
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+    10 {
+      references.fieldName = media
+      as = heroVisual
+    }
+    15 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+    15 {
+      references.fieldName = assets
+      as = heroBackgroundAsset
+    }
+    20 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    20 {
+      table = tx_sitepackage_partner_logo
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_partner_logos' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      max = 4
+      as = partnerLogos
+      dataProcessing {
+        10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        10 {
+          references.fieldName = image
+          as = image
+        }
+      }
+    }
+    30 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    30 {
+      table = tx_sitepackage_trust_item
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_trust_items' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = trustItems
+    }
+  }
+}

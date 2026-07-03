@@ -1,0 +1,29 @@
+<f:if condition="{processSteps}">
+    <section id="prozess" data-shape="network" data-morph-shape="3">
+        <div class="wrap">
+            <f:if condition="{data.process_eyebrow}">
+                <p class="kicker cy reveal">{data.process_eyebrow}</p>
+            </f:if>
+            <f:if condition="{data.header}">
+                <h2 class="reveal d1">{data.header}</h2>
+            </f:if>
+
+            <div class="steps reveal d2">
+                <f:for each="{processSteps}" as="step" iteration="iterator">
+                    <article class="step">
+                        <span class="n">
+                            <f:if condition="{step.data.step_number}">
+                                <f:then>{step.data.step_number}</f:then>
+                                <f:else>0{iterator.cycle}</f:else>
+                            </f:if>
+                        </span>
+                        <h3>{step.data.title}</h3>
+                        <f:if condition="{step.data.bodytext}">
+                            <p>{step.data.bodytext}</p>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

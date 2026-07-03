@@ -1,0 +1,7 @@
+tt_content.seo_text < lib.contentElement
+tt_content.seo_text {
+  templateName = SeoText
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+}

@@ -1,0 +1,34 @@
+<section>
+    <div class="wrap">
+        <f:if condition="{data.hero_eyebrow}">
+            <p class="kicker reveal">{data.hero_eyebrow}</p>
+        </f:if>
+        <f:if condition="{data.header}">
+            <h2 class="reveal d1">{data.header}</h2>
+        </f:if>
+        <f:if condition="{data.bodytext}">
+            <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+        </f:if>
+
+        <f:if condition="{valuePoints}">
+            <div class="usps reveal d2">
+                <f:for each="{valuePoints}" as="point">
+                    <article class="usp">
+                        <div class="ic" aria-hidden="true">
+                            <f:switch expression="{point.data.icon}">
+                                <f:case value="layers">⛁</f:case>
+                                <f:case value="chart">↺</f:case>
+                                <f:case value="target">EU</f:case>
+                                <f:defaultCase>🛡</f:defaultCase>
+                            </f:switch>
+                        </div>
+                        <h3>{point.data.title}</h3>
+                        <f:if condition="{point.data.bodytext}">
+                            <p>{point.data.bodytext}</p>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </f:if>
+    </div>
+</section>

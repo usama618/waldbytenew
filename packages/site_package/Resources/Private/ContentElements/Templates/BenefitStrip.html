@@ -1,0 +1,24 @@
+<f:if condition="{valuePoints}">
+    <section>
+        <div class="wrap">
+            <div class="usps reveal d2">
+                <f:for each="{valuePoints}" as="point">
+                    <article class="usp">
+                        <div class="ic" aria-hidden="true">
+                            <f:switch expression="{point.data.icon}">
+                                <f:case value="layers">☰</f:case>
+                                <f:case value="chart">▲</f:case>
+                                <f:case value="target">◎</f:case>
+                                <f:defaultCase>✓</f:defaultCase>
+                            </f:switch>
+                        </div>
+                        <h3>{point.data.title}</h3>
+                        <f:if condition="{point.data.bodytext}">
+                            <p>{point.data.bodytext}</p>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

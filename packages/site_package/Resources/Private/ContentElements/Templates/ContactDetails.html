@@ -1,0 +1,27 @@
+<section>
+    <div class="wrap">
+        <f:if condition="{data.hero_eyebrow}">
+            <p class="kicker reveal">{data.hero_eyebrow}</p>
+        </f:if>
+        <f:if condition="{data.header}">
+            <h2 class="reveal d1">
+                {data.header}
+                <f:if condition="{data.hero_gradient_word}">
+                    <br><span class="glow">{data.hero_gradient_word}</span>
+                </f:if>
+            </h2>
+        </f:if>
+        <f:if condition="{data.bodytext}">
+            <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+        </f:if>
+
+        <div class="contact-grid reveal d2">
+            <div class="ccard"><span class="lbl">E-Mail</span><a href="mailto:{data.footer_email}">{data.footer_email}</a></div>
+            <div class="ccard"><span class="lbl">Telefon</span><a href="tel:+4917658824334">{data.footer_phone}</a></div>
+            <div class="ccard"><span class="lbl">Erreichbarkeit</span><p>Mo - Fr, 09:00 - 18:00 Uhr</p></div>
+            <div class="ccard"><span class="lbl">Standort</span><p>{data.footer_address_line_1}</p></div>
+        </div>
+    </div>
+</section>
+
+<f:cObject typoscriptObjectPath="lib.renderContent" data="{page: data.pid, colPos: 181}" />

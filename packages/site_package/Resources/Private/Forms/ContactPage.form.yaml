@@ -1,0 +1,154 @@
+type: Form
+identifier: ContactPage
+label: Kontaktformular
+prototypeName: standard
+renderingOptions:
+  submitButtonLabel: Nachricht senden
+  additionalParams:
+    contact-form: 1
+finishers:
+  -
+    identifier: EmailToReceiver
+    options:
+      subject: 'New inquiry: Waldbyte'
+      recipients:
+        info@waldbyte.de: Waldbyte
+      senderAddress: '{email}'
+      senderName: '{name}'
+      addHtmlPart: true
+      attachUploads: true
+      translation:
+        language: default
+      title: ''
+  -
+    identifier: Redirect
+    options:
+      pageUid: '33'
+      additionalParameters: ''
+      fragment: ''
+renderables:
+  -
+    type: Page
+    identifier: page-1
+    label: ''
+    renderables:
+      -
+        type: GridRow
+        identifier: row-name
+        properties:
+          containerClassAttribute: contact-form__row
+        renderables:
+          -
+            type: GridColumn
+            identifier: name-column
+            properties:
+              gridColumnClassAutoConfiguration:
+                viewPorts:
+                  xs:
+                    numbersOfColumnsToUse: 12
+                  md:
+                    numbersOfColumnsToUse: 6
+            renderables:
+              -
+                type: Text
+                identifier: name
+                label: Ihr Name *
+                properties:
+                  containerClassAttribute: contact-form__field
+                  fluidAdditionalAttributes:
+                    placeholder: Ihr Name *
+                    autocomplete: name
+                validators:
+                  -
+                    identifier: NotEmpty
+          -
+            type: GridColumn
+            identifier: email-column
+            properties:
+              gridColumnClassAutoConfiguration:
+                viewPorts:
+                  xs:
+                    numbersOfColumnsToUse: 12
+                  md:
+                    numbersOfColumnsToUse: 6
+            renderables:
+              -
+                type: Email
+                identifier: email
+                label: Ihre E-Mail-Adresse *
+                properties:
+                  containerClassAttribute: contact-form__field
+                  fluidAdditionalAttributes:
+                    placeholder: Ihre E-Mail-Adresse *
+                    autocomplete: email
+                validators:
+                  -
+                    identifier: NotEmpty
+                  -
+                    identifier: EmailAddress
+      -
+        type: GridRow
+        identifier: row-company
+        properties:
+          containerClassAttribute: contact-form__row contact-form__row--full
+        renderables:
+          -
+            type: GridColumn
+            identifier: company-column
+            properties:
+              gridColumnClassAutoConfiguration:
+                viewPorts:
+                  xs:
+                    numbersOfColumnsToUse: 12
+                  md:
+                    numbersOfColumnsToUse: 12
+            renderables:
+              -
+                type: Text
+                identifier: company
+                label: Unternehmen (optional)
+                properties:
+                  containerClassAttribute: contact-form__field
+                  fluidAdditionalAttributes:
+                    placeholder: Unternehmen (optional)
+                    autocomplete: organization
+      -
+        type: SingleSelect
+        identifier: topic
+        label: Leistung / Thema
+        properties:
+          containerClassAttribute: contact-form__field
+          elementClassAttribute: contact-form__select
+          prependOptionLabel: Leistung / Thema
+          prependOptionValue: ''
+          options:
+            Webentwicklung: Webentwicklung
+            E-Commerce: E-Commerce
+            SEO: SEO
+            Online-Marketing: Online-Marketing
+            Sonstiges: Sonstiges
+        validators:
+          -
+            identifier: NotEmpty
+      -
+        type: Textarea
+        identifier: message
+        label: Ihre Nachricht *
+        properties:
+          containerClassAttribute: contact-form__field
+          fluidAdditionalAttributes:
+            placeholder: Ihre Nachricht *
+            autocomplete: off
+          rows: 6
+        validators:
+          -
+            identifier: NotEmpty
+      -
+        type: Checkbox
+        identifier: privacy
+        label: Ich stimme der Verarbeitung meiner Daten gemäß der Datenschutzerklärung zu.
+        properties:
+          elementClassAttribute: contact-form__checkbox
+        validators:
+          -
+            identifier: NotEmpty

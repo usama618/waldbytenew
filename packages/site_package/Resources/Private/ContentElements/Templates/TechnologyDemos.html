@@ -1,0 +1,35 @@
+<f:if condition="{demos}">
+    <section data-shape="network">
+        <div class="wrap">
+            <f:if condition="{data.hero_eyebrow}">
+                <p class="kicker cy reveal">{data.hero_eyebrow}</p>
+            </f:if>
+            <f:if condition="{data.header}">
+                <h2 class="reveal d1">{data.header}</h2>
+            </f:if>
+            <f:if condition="{data.bodytext}">
+                <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+            </f:if>
+
+            <div class="projects reveal d2">
+                <f:for each="{demos}" as="demo">
+                    <article class="pcard">
+                        <span class="tag">LIVE-DEMO</span>
+                        <h3>{demo.data.title}</h3>
+                        <f:if condition="{demo.data.bodytext}">
+                            <p>{demo.data.bodytext}</p>
+                        </f:if>
+                        <div class="demo-links">
+                            <f:if condition="{demo.data.primary_label} && {demo.data.primary_link}">
+                                <f:link.typolink parameter="{demo.data.primary_link}" class="f">{demo.data.primary_label}</f:link.typolink>
+                            </f:if>
+                            <f:if condition="{demo.data.secondary_label} && {demo.data.secondary_link}">
+                                <f:link.typolink parameter="{demo.data.secondary_link}" class="b">{demo.data.secondary_label}</f:link.typolink>
+                            </f:if>
+                        </div>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

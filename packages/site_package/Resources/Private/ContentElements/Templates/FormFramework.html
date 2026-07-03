@@ -1,0 +1,18 @@
+<html xmlns:f="http://typo3.org/ns/TYPO3/CMS/Fluid/ViewHelpers" xmlns:formvh="http://typo3.org/ns/TYPO3/CMS/Form/ViewHelpers" data-namespace-typo3-fluid="true">
+<section>
+    <div class="wrap">
+        <p class="kicker cy reveal">Nachricht senden</p>
+        <h2 class="reveal d1">Erzählen Sie uns von<br><span class="glow-cyan">Ihrem Projekt.</span></h2>
+        <div class="cform reveal d2">
+            <f:if condition="{flexFormData.settings.persistenceIdentifier}">
+                <f:then>
+                    <formvh:render persistenceIdentifier="{flexFormData.settings.persistenceIdentifier}" />
+                </f:then>
+                <f:else>
+                    <formvh:render persistenceIdentifier="1:/form_definitions/ContactPage.form.yaml" />
+                </f:else>
+            </f:if>
+        </div>
+    </div>
+</section>
+</html>

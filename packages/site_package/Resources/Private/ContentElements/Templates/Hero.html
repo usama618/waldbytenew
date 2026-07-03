@@ -1,0 +1,69 @@
+<section id="start" class="hero" data-morph-shape="0">
+    <f:switch expression="{data.pid}">
+        <f:case value="1"><canvas data-shape="forest" aria-hidden="true"></canvas></f:case>
+        <f:case value="3"><canvas data-shape="tunnel" aria-hidden="true"></canvas></f:case>
+        <f:case value="4"><canvas data-shape="network" aria-hidden="true"></canvas></f:case>
+        <f:case value="5"><canvas data-shape="forest" aria-hidden="true"></canvas></f:case>
+        <f:case value="7"><canvas data-shape="core" aria-hidden="true"></canvas></f:case>
+        <f:case value="20"><canvas data-shape="network" aria-hidden="true"></canvas></f:case>
+        <f:case value="21"><canvas data-shape="network" aria-hidden="true"></canvas></f:case>
+        <f:case value="22"><canvas data-shape="network" aria-hidden="true"></canvas></f:case>
+        <f:case value="23"><canvas data-shape="network" aria-hidden="true"></canvas></f:case>
+        <f:defaultCase><canvas data-shape="grid" aria-hidden="true"></canvas></f:defaultCase>
+    </f:switch>
+    <div class="hero-scrim" aria-hidden="true"></div>
+
+    <div class="wrap">
+        <f:if condition="{data.pid} != 1">
+            <p class="crumbs"><f:link.page pageUid="1">Start</f:link.page> / {data.header}</p>
+        </f:if>
+
+        <f:if condition="{data.hero_eyebrow}">
+            <p class="kicker reveal">{data.hero_eyebrow}</p>
+        </f:if>
+
+        <f:if condition="{data.header}">
+            <h1 class="reveal d1">
+                {data.header}
+                <f:if condition="{data.hero_gradient_word}">
+                    <br><span class="glow">{data.hero_gradient_word}</span>
+                </f:if>
+            </h1>
+        </f:if>
+
+        <f:if condition="{data.bodytext}">
+            <div class="sub reveal d2"><f:format.html>{data.bodytext}</f:format.html></div>
+        </f:if>
+
+        <f:if condition="{trustItems}">
+            <div class="checks reveal d2">
+                <f:for each="{trustItems}" as="item">
+                    <span>{item.data.label}</span>
+                </f:for>
+            </div>
+        </f:if>
+
+        <div class="cta-btns reveal d3">
+            <f:if condition="{data.hero_primary_label} && {data.hero_primary_link}">
+                <f:link.typolink parameter="{data.hero_primary_link}" class="btn btn-primary">{data.hero_primary_label}</f:link.typolink>
+            </f:if>
+            <f:if condition="{data.hero_secondary_label} && {data.hero_secondary_link}">
+                <f:link.typolink parameter="{data.hero_secondary_link}" class="btn btn-ghost">{data.hero_secondary_label}</f:link.typolink>
+            </f:if>
+        </div>
+    </div>
+</section>
+
+<f:if condition="{partnerLogos}">
+    <div class="marquee hero-logo-strip" aria-label="Technologien und Partner">
+        <div class="track">
+            <f:for each="{partnerLogos}" as="logo">
+                <f:if condition="{logo.image.0}">
+                        <span class="marquee-logo">
+                            <f:image image="{logo.image.0}" alt="{logo.data.name}" />
+                        </span>
+                </f:if>
+            </f:for>
+        </div>
+    </div>
+</f:if>

@@ -1,0 +1,34 @@
+base: 'https://waldbyte.de/'
+baseVariants:
+  -
+    base: 'https://newhobby.ddev.site/'
+    condition: 'getenv("IS_DDEV_PROJECT") == "true"'
+dependencies:
+  - app/site-package
+languages:
+  -
+    title: German
+    enabled: true
+    languageId: 0
+    base: /
+    locale: de_DE
+    navigationTitle: Deutsch
+    flag: de
+    hreflang: ''
+    websiteTitle: ''
+rootPageId: 1
+routeEnhancers:
+  PageTypeSuffix:
+    type: PageType
+    map:
+      /: 0
+      sitemap.xml: 1533906435
+  Sitemap:
+    type: Simple
+    routePath: 'sitemap-type/{sitemap}'
+    aspects:
+      sitemap:
+        type: StaticValueMapper
+        map:
+          pages: pages
+websiteTitle: WALDBYTE

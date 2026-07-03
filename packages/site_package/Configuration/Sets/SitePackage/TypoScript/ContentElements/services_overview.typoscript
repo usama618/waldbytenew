@@ -1,0 +1,17 @@
+tt_content.services_overview =< lib.contentElement
+tt_content.services_overview {
+  templateName = ServicesOverview
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_service_item
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_service_items' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = serviceItems
+    }
+  }
+}

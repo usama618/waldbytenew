@@ -1,0 +1,20 @@
+# render content from specified colPos
+# usage in Fluid: {f:cObject(typoscriptObjectPath: 'lib.renderContent', data: '{colPos: 0, slide: "-1", max: '1'}')}
+lib.renderContent = CONTENT
+lib.renderContent {
+  table = tt_content
+  select {
+    orderBy = sorting
+    where = colPos = {field:colPos}
+    where.insertData = 1
+    max.field = max
+    pidInList.data = field:page
+    pidInList.override.data = field:content_from_pid
+    pidInList.insertData = 1
+  }
+  slide.field = slide
+  slide {
+    collect.field = slideCollect
+  }
+}
+

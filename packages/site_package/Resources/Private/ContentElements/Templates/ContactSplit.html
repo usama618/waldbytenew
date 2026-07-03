@@ -1,0 +1,32 @@
+<section class="hero">
+    <canvas data-shape="core" aria-hidden="true"></canvas>
+    <div class="hero-scrim" aria-hidden="true"></div>
+    <div class="wrap">
+        <p class="crumbs"><f:link.page pageUid="1">Start</f:link.page> / Kontakt</p>
+        <f:if condition="{data.hero_eyebrow}">
+            <p class="kicker reveal">{data.hero_eyebrow}</p>
+        </f:if>
+        <f:if condition="{data.header}">
+            <h1 class="reveal d1">
+                {data.header}
+                <f:if condition="{data.hero_gradient_word}">
+                    <br><span class="glow">{data.hero_gradient_word}</span>
+                </f:if>
+            </h1>
+        </f:if>
+        <f:if condition="{data.bodytext}">
+            <div class="sub reveal d2"><f:format.html>{data.bodytext}</f:format.html></div>
+        </f:if>
+        <f:if condition="{trustItems}">
+            <div class="checks reveal d2">
+                <f:for each="{trustItems}" as="item">
+                    <span>{item.data.label}</span>
+                </f:for>
+            </div>
+        </f:if>
+        <div class="cta-btns reveal d3">
+            <f:link.page pageUid="7" class="btn btn-primary">Projekt anfragen</f:link.page>
+            <a class="btn btn-ghost" href="https://calendly.com/waldbyte/30min" target="_blank" rel="noopener noreferrer">Kostenloses Erstgespräch</a>
+        </div>
+    </div>
+</section>

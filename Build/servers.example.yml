@@ -1,0 +1,6 @@
+hosts:
+  production:
+    hostname: waldbyte.de
+    remote_user: deploy
+    deploy_path: /var/www/waldbytenew
+    keep_releases: 5

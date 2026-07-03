@@ -1,0 +1,25 @@
+<section>
+    <div class="wrap">
+        <f:if condition="{data.hero_eyebrow}">
+            <p class="kicker cy reveal">{data.hero_eyebrow}</p>
+        </f:if>
+        <f:if condition="{data.header}">
+            <h2 class="reveal d1">{data.header}</h2>
+        </f:if>
+        <f:if condition="{data.bodytext}">
+            <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+        </f:if>
+
+        <f:if condition="{valuePoints}">
+            <div class="usps reveal d2">
+                <f:for each="{valuePoints}" as="point">
+                    <article class="usp">
+                        <div class="ic" aria-hidden="true">◎</div>
+                        <h3>{point.data.title}</h3>
+                        <p>{point.data.bodytext}</p>
+                    </article>
+                </f:for>
+            </div>
+        </f:if>
+    </div>
+</section>

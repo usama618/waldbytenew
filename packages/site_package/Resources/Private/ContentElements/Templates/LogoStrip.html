@@ -1,0 +1,29 @@
+<f:if condition="{partnerLogos}">
+    <f:if condition="{data.header} || {data.bodytext}">
+        <section>
+            <div class="wrap">
+                <f:if condition="{data.hero_eyebrow}">
+                    <p class="kicker reveal">{data.hero_eyebrow}</p>
+                </f:if>
+                <f:if condition="{data.header}">
+                    <h2 class="reveal d1">{data.header}</h2>
+                </f:if>
+                <f:if condition="{data.bodytext}">
+                    <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+                </f:if>
+            </div>
+        </section>
+    </f:if>
+
+    <div class="marquee static-logo-strip" aria-label="Technologien">
+        <div class="track">
+            <f:for each="{partnerLogos}" as="logo">
+                <f:if condition="{logo.image.0}">
+                    <span class="marquee-logo">
+                        <f:image image="{logo.image.0}" alt="{logo.data.name}" />
+                    </span>
+                </f:if>
+            </f:for>
+        </div>
+    </div>
+</f:if>

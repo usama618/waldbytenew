@@ -1,0 +1,44 @@
+<f:if condition="{testimonials} || {blogPosts}">
+    <section id="insights">
+        <div class="wrap">
+            <f:if condition="{testimonials}">
+                <p class="kicker reveal">{data.testimonials_eyebrow -> f:if(condition: data.testimonials_eyebrow, then: data.testimonials_eyebrow, else: 'Warum Waldbyte')}</p>
+                <div class="usps reveal d2">
+                    <f:for each="{testimonials}" as="testimonial" iteration="iterator">
+                        <article class="usp">
+                            <div class="ic" aria-hidden="true">0{iterator.cycle}</div>
+                            <h3>{testimonial.data.author_name}</h3>
+                            <f:if condition="{testimonial.data.quote_text}">
+                                <p>{testimonial.data.quote_text}</p>
+                            </f:if>
+                        </article>
+                    </f:for>
+                </div>
+            </f:if>
+
+            <f:if condition="{blogPosts}">
+                <p class="kicker cy reveal">Aktuelle Insights</p>
+                <h2 class="reveal d1">Wissen, das <span class="glow-cyan">weiterbringt.</span></h2>
+                <div class="blog reveal d2">
+                    <f:for each="{blogPosts}" as="post">
+                        <f:link.page pageUid="{post.data.uid}" class="bcard">
+                            <f:if condition="{post.featuredImage.0}">
+                                <span class="bcard-media">
+                                    <f:image image="{post.featuredImage.0}" alt="{post.data.title}" loading="lazy" />
+                                </span>
+                            </f:if>
+                            <span class="cat">{post.data.blog_badge -> f:if(condition: post.data.blog_badge, then: post.data.blog_badge, else: 'BLOG')}</span>
+                            <h3>{post.data.title}</h3>
+                            <f:if condition="{post.data.publish_date}">
+                                <time datetime="{f:format.date(date: post.data.publish_date, format: 'Y-m-d')}">{f:format.date(date: post.data.publish_date, format: 'd. F Y')}</time>
+                            </f:if>
+                        </f:link.page>
+                    </f:for>
+                </div>
+                <div class="cta-btns reveal d3">
+                    <f:link.page pageUid="{data.blog_list_page -> f:if(condition: data.blog_list_page, then: data.blog_list_page, else: 11)}" class="btn btn-ghost">Alle Artikel ansehen</f:link.page>
+                </div>
+            </f:if>
+        </div>
+    </section>
+</f:if>

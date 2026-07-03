@@ -1,0 +1,27 @@
+tt_content.logo_strip < lib.contentElement
+tt_content.logo_strip {
+  templateName = LogoStrip
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_partner_logo
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_partner_logos' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      max = 4
+      as = partnerLogos
+
+      dataProcessing {
+        10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        10 {
+          references.fieldName = image
+          as = image
+        }
+      }
+    }
+  }
+}

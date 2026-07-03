@@ -1,0 +1,27 @@
+<f:if condition="{serviceItems}">
+    <section id="leistungen" data-shape="grid" data-morph-shape="1">
+        <div class="wrap">
+            <f:if condition="{data.services_eyebrow}">
+                <p class="kicker cy reveal">{data.services_eyebrow}</p>
+            </f:if>
+            <f:if condition="{data.header}">
+                <h2 class="reveal d1">{data.header}</h2>
+            </f:if>
+
+            <div class="grid4 reveal d2">
+                <f:for each="{serviceItems}" as="item" iteration="iterator">
+                    <article class="scard">
+                        <span class="num">0{iterator.cycle}</span>
+                        <h3>{item.data.title}</h3>
+                        <f:if condition="{item.data.bodytext}">
+                            <f:format.html>{item.data.bodytext}</f:format.html>
+                        </f:if>
+                        <f:if condition="{item.data.cta_label} && {item.data.cta_link}">
+                            <f:link.typolink parameter="{item.data.cta_link}">{item.data.cta_label} →</f:link.typolink>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

@@ -1,0 +1,32 @@
+tt_content.technology_demos < lib.contentElement
+tt_content.technology_demos {
+  templateName = TechnologyDemos
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_technology_demo
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_technology_demos' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = demos
+
+      dataProcessing {
+        10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        10 {
+          references.fieldName = logo
+          as = logo
+        }
+
+        20 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        20 {
+          references.fieldName = image
+          as = image
+        }
+      }
+    }
+  }
+}

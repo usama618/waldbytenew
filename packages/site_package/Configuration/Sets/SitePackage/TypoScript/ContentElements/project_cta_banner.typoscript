@@ -1,0 +1,14 @@
+tt_content.project_cta_banner =< lib.contentElement
+tt_content.project_cta_banner {
+  templateName = ProjectCtaBanner
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+    10 {
+      references.fieldName = media
+      as = ctaBackground
+    }
+  }
+}

@@ -1,0 +1,46 @@
+<f:if condition="{projectCards}">
+    <section data-shape="tunnel">
+        <div class="wrap">
+            <f:if condition="{data.hero_eyebrow}">
+                <p class="kicker reveal">{data.hero_eyebrow}</p>
+            </f:if>
+            <f:if condition="{data.header}">
+                <h2 class="reveal d1">{data.header}</h2>
+            </f:if>
+            <f:if condition="{data.bodytext}">
+                <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
+            </f:if>
+
+            <div class="projects reveal d2">
+                <f:for each="{projectCards}" as="card">
+                    <article class="pcard">
+                        <f:if condition="{card.image.0}">
+                            <div class="pcard-media">
+                                <f:image image="{card.image.0}" alt="{card.data.title}" loading="lazy" />
+                            </div>
+                        </f:if>
+                        <f:if condition="{card.data.badge_label}">
+                            <span class="tag">{card.data.badge_label}</span>
+                        </f:if>
+                        <h3>{card.data.title}</h3>
+                        <f:if condition="{card.data.bodytext}">
+                            <p>{card.data.bodytext}</p>
+                        </f:if>
+
+                        <f:if condition="{card.metrics}">
+                            <div class="pstats">
+                                <f:for each="{card.metrics}" as="metric">
+                                    <div><b>{metric.data.value_text}</b>{metric.data.label}</div>
+                                </f:for>
+                            </div>
+                        </f:if>
+
+                        <f:if condition="{card.data.cta_label} && {card.data.cta_link}">
+                            <f:link.typolink parameter="{card.data.cta_link}" class="plink">{card.data.cta_label}</f:link.typolink>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

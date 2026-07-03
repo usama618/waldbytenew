@@ -1,0 +1,18 @@
+tt_content.usp_block < lib.contentElement
+tt_content.usp_block {
+  templateName = UspBlock
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_value_point
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_value_points' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = valuePoints
+    }
+  }
+}

@@ -1,0 +1,40 @@
+<f:if condition="{slides}">
+    <section id="projekte" data-shape="tunnel" data-morph-shape="2">
+        <div class="wrap">
+            <f:if condition="{data.header}">
+                <p class="kicker reveal">{data.header}</p>
+            </f:if>
+
+            <div class="projects reveal d2">
+                <f:for each="{slides}" as="slide">
+                    <article class="pcard">
+                        <f:if condition="{slide.slideImage.0}">
+                            <div class="pcard-media">
+                                <f:image image="{slide.slideImage.0}" alt="{slide.data.title}" loading="lazy" />
+                            </div>
+                        </f:if>
+                        <f:if condition="{slide.data.badge_label}">
+                            <span class="tag">{slide.data.badge_label}</span>
+                        </f:if>
+                        <h3>{slide.data.title}</h3>
+                        <f:if condition="{slide.data.bodytext}">
+                            <f:format.html>{slide.data.bodytext}</f:format.html>
+                        </f:if>
+
+                        <f:if condition="{slide.metrics}">
+                            <div class="pstats">
+                                <f:for each="{slide.metrics}" as="metric">
+                                    <div><b>{metric.data.value_text}</b>{metric.data.label}</div>
+                                </f:for>
+                            </div>
+                        </f:if>
+
+                        <f:if condition="{slide.data.cta_label} && {slide.data.cta_link}">
+                            <f:link.typolink parameter="{slide.data.cta_link}" class="plink">{slide.data.cta_label}</f:link.typolink>
+                        </f:if>
+                    </article>
+                </f:for>
+            </div>
+        </div>
+    </section>
+</f:if>

@@ -1,0 +1,15 @@
+tt_content.contact_details < lib.contentElement
+tt_content.contact_details {
+  templateName = ContactDetails
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+    10 {
+      references.fieldName = media
+      as = media
+    }
+  }
+}

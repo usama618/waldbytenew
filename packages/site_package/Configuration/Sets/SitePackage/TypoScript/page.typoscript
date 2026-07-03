@@ -1,0 +1,137 @@
+##############
+#### PAGE ####
+##############
+page = PAGE
+page {
+    typeNum = 0
+    shortcutIcon = EXT:site_package/Resources/Public/Icons/favicon.png
+    bodyTagCObject = TEXT
+    bodyTagCObject {
+        dataWrap = <body class="page page-{field:uid} page-type-{field:doktype} subpage">
+        insertData = 1
+    }
+
+    10 = PAGEVIEW
+    10 {
+        paths {
+            0 = EXT:site_package/Resources/Private/PageView/
+            1 = {$page.pageview.paths}
+        }
+        dataProcessing {
+            10 = files
+            10 {
+                references.fieldName = media
+            }
+            20 = TYPO3\CMS\Frontend\DataProcessing\MenuProcessor
+            20 {
+                special = list
+                special.value = 2,3,4,5,7
+                includeSpacer = 0
+                levels = 2
+                expandAll = 1
+                as = mainNavigation
+            }
+            30 = TYPO3\CMS\Frontend\DataProcessing\MenuProcessor
+            30 {
+                special = directory
+                special.value = 2
+                includeSpacer = 0
+                as = footerServicesNavigation
+            }
+            40 = TYPO3\CMS\Frontend\DataProcessing\MenuProcessor
+            40 {
+                special = directory
+                special.value = 4
+                includeSpacer = 0
+                as = footerTechnologiesNavigation
+            }
+            50 = TYPO3\CMS\Frontend\DataProcessing\MenuProcessor
+            50 {
+                special = list
+                special.value = 5
+                includeSpacer = 0
+                as = footerCompanyNavigation
+            }
+            60 = TYPO3\CMS\Frontend\DataProcessing\MenuProcessor
+            60 {
+                special = list
+                special.value = 31,32
+                includeSpacer = 0
+                as = footerLegalNavigation
+            }
+            70 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+            70 {
+                table = tt_content
+                pidInList = 1
+                where = CType = 'footer_content'
+                orderBy = sorting
+                max = 1
+                as = footerContent
+                dataProcessing {
+                    10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+                    10 {
+                        references.fieldName = media
+                        as = logo
+                    }
+                }
+            }
+        }
+    }
+    meta {
+        viewport = {$page.meta.viewport}
+        description = TEXT
+        description {
+            data = page:description
+            if.isTrue.data = page:description
+        }
+        robots = index,follow
+        apple-mobile-web-app-capable = {$page.meta.apple-mobile-web-app-capable}
+
+        X-UA-Compatible = {$page.meta.compatible}
+        X-UA-Compatible {
+            attribute = http-equiv
+        }
+    }
+
+    includeCSS {
+        site_package = EXT:site_package/Resources/Public/Css/styles.css
+    }
+    includeJSFooterlibs {
+        three = EXT:site_package/Resources/Public/JavaScript/Vendor/three.r128.min.js
+    }
+    includeJSFooter {
+        site_package = EXT:site_package/Resources/Public/JavaScript/main.js
+    }
+    headerData {
+        910 = COA
+        910 {
+            if {
+                value = {$page.analytics.googleMeasurementId}
+                equals =
+                negate = 1
+            }
+            10 = TEXT
+            10.value = {$page.analytics.googleMeasurementId}
+            10.wrap = <script async data-cookieconsent="statistics" type="text/plain" data-src="https://www.googletagmanager.com/gtag/js?id=|"></script>
+
+            20 = TEXT
+            20.value = {$page.analytics.googleMeasurementId}
+            20.wrap (
+<script data-cookieconsent="statistics" type="text/plain">
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', '#');
+</script>
+)
+            20.wrap.splitChar = #
+        }
+    }
+}
+
+page.headerData.900 = USER
+page.headerData.900 {
+    userFunc = App\SitePackage\Seo\StructuredDataRenderer->render
+}
+
+page.headerData.998.10 >

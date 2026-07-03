@@ -1,0 +1,45 @@
+tt_content.testimonials_insights =< lib.contentElement
+tt_content.testimonials_insights {
+  templateName = TestimonialsInsights
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+  dataProcessing {
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_testimonial_item
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_testimonial_items' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = testimonials
+      dataProcessing {
+        10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        10 {
+          references.fieldName = image
+          as = authorImage
+        }
+      }
+    }
+
+    20 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    20 {
+      table = pages
+      pidInList.field = pages
+      where = doktype = 137
+      orderBy = publish_date DESC, sorting DESC, uid DESC
+      max = 3
+      as = blogPosts
+      dataProcessing {
+        10 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+        10 {
+          references {
+            table = pages
+            uid.field = uid
+            fieldName = featured_image
+          }
+          as = featuredImage
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+tt_content.region_focus < lib.contentElement
+tt_content.region_focus {
+  templateName = RegionFocus
+  templateRootPaths {
+    200 = EXT:site_package/Resources/Private/ContentElements/Templates/
+  }
+
+  dataProcessing {
+    5 = TYPO3\CMS\Frontend\DataProcessing\FilesProcessor
+    5 {
+      references.fieldName = media
+      as = media
+    }
+
+    10 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    10 {
+      table = tx_sitepackage_value_point
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_value_points' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = valuePoints
+    }
+
+    20 = TYPO3\CMS\Frontend\DataProcessing\DatabaseQueryProcessor
+    20 {
+      table = tx_sitepackage_trust_item
+      pidInList.field = pid
+      where.dataWrap = tablename='tt_content' AND fieldname='tx_sitepackage_trust_items' AND uid_foreign={field:uid}
+      orderBy = sorting_foreign
+      as = trustItems
+    }
+  }
+}
