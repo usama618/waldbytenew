@@ -111,10 +111,10 @@ task('typo3:extension:setup', function () {
     run('{{bin/php}} {{bin/typo3}} extension:setup');
 });
 
-desc('TYPO3 folder structure check');
-task('typo3:fixfolderstructure', function () {
+desc('TYPO3 runtime folder preparation');
+task('typo3:prepare_runtime_dirs', function () {
     cd('{{release_path}}');
-    run('{{bin/php}} {{bin/typo3}} install:fixfolderstructure');
+    run('mkdir -p public/fileadmin public/typo3temp public/typo3temp/assets var/cache var/charset var/labels var/lock var/log var/session var/transient');
 });
 
 desc('TYPO3 system cache warmup');
@@ -140,7 +140,7 @@ task('deploy', [
     'deploy:shared',
     'deploy:writable',
     'deploy:vendors',
-    'typo3:fixfolderstructure',
+    'typo3:prepare_runtime_dirs',
     'typo3:extension:setup',
     'typo3:cache:warmup',
     'deploy:clear_paths',

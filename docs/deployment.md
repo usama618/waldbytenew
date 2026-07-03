@@ -175,7 +175,7 @@ base64 -i config/system/settings.php | tr -d '\n'
 5. Code is uploaded with rsync.
 6. Shared files/folders are symlinked into the release.
 7. Composer installs production dependencies on the server.
-8. TYPO3 runs `install:fixfolderstructure`, `extension:setup`, and cache warmup.
+8. The deploy prepares TYPO3 runtime folders, then runs `extension:setup` and cache warmup.
 9. `current` is switched atomically to the new release.
 10. TYPO3 cache is flushed and old releases are cleaned.
 
