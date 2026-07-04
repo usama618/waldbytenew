@@ -19,10 +19,13 @@ Set these on the live server or in DDEV, not in Git:
 ```bash
 vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot
+vendor/bin/typo3 seo:rendered:snapshot
 vendor/bin/typo3 seo:recommendations:generate
 ```
 
 Use `--dry-run` on sync/snapshot commands to see what would be processed without writing rows.
+
+`seo:pages:snapshot` reads TYPO3 page records, `tt_content` fields, and site-package inline records. `seo:rendered:snapshot` crawls the actual frontend HTML for the collected URLs and stores titles, descriptions, H1-H6 headings, visible text, internal links, images and alt text, robots/canonical data, and JSON-LD structured data.
 
 Recommendations are stored as drafts. Applying a recommendation is intentionally manual:
 

@@ -12,7 +12,8 @@ use TYPO3\CMS\Core\Http\HtmlResponse;
 final class SeoAssistantModuleController
 {
     private const GSC_TABLE = 'tx_seoassistant_gsc_row';
-    private const SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
+    private const PAGE_SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
+    private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
 
     public function __construct(
@@ -27,33 +28,43 @@ final class SeoAssistantModuleController
     private function render(): string
     {
         $recommendations = $this->fetchRecommendations();
+        $renderedSnapshots = $this->fetchRenderedSnapshots();
+        $pageSnapshots = $this->fetchPageSnapshots();
         $stats = $this->fetchStats();
 
         return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>SEO Assistant</title>'
             . '<style>'
             . 'body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;background:#f6f7f9;color:#1f2933;}'
-            . 'h1{font-size:24px;margin:0 0 20px;}'
-            . '.stats{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:12px;margin-bottom:20px;}'
+            . 'h1{font-size:24px;margin:0 0 6px;}'
+            . 'h2{font-size:18px;margin:28px 0 12px;}'
+            . 'p{margin:0 0 18px;}'
+            . '.muted{color:#5d6875;}'
+            . '.stats{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin:18px 0 22px;}'
             . '.stat{background:#fff;border:1px solid #d9dde3;border-radius:6px;padding:14px;}'
             . '.stat strong{display:block;font-size:22px;margin-top:4px;}'
-            . 'table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d9dde3;border-radius:6px;overflow:hidden;}'
+            . '.panel{background:#fff;border:1px solid #d9dde3;border-radius:6px;overflow:hidden;margin-bottom:24px;}'
+            . 'table{width:100%;border-collapse:collapse;}'
             . 'th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #e3e6ea;font-size:13px;}'
             . 'th{font-weight:700;background:#eef1f4;}'
             . 'tr:last-child td{border-bottom:0;}'
-            . '.url{max-width:280px;word-break:break-word;}'
-            . '.muted{color:#5d6875;}'
+            . '.url{max-width:300px;word-break:break-word;}'
             . '.priority{font-weight:700;}'
-            . '.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#e8edf3;color:#334155;font-size:12px;}'
-            . 'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;}'
+            . '.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#e8edf3;color:#334155;font-size:12px;white-space:nowrap;}'
+            . '.pill-critical{background:#fee2e2;color:#991b1b;}'
+            . '.pill-warning{background:#fef3c7;color:#92400e;}'
+            . '.pill-notice{background:#e0f2fe;color:#075985;}'
+            . '.issues{display:flex;gap:5px;flex-wrap:wrap;}'
+            . 'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:normal;}'
             . '</style></head><body>'
             . '<h1>SEO Assistant</h1>'
+            . '<p class="muted">Central overview for Search Console, rendered frontend audits, CMS content snapshots and reviewable recommendations.</p>'
             . $this->renderStats($stats)
-            . '<table><thead><tr>'
-            . '<th>Priority</th><th>Status</th><th>Type</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Apply</th>'
-            . '</tr></thead><tbody>'
-            . ($recommendations === [] ? '<tr><td colspan="9" class="muted">No recommendations yet. Run the CLI sync, snapshot and generate commands first.</td></tr>' : '')
-            . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
-            . '</tbody></table>'
+            . '<h2>Recommendations</h2>'
+            . '<div class="panel">' . $this->renderRecommendationsTable($recommendations) . '</div>'
+            . '<h2>Rendered URL Audit</h2>'
+            . '<div class="panel">' . $this->renderRenderedSnapshotsTable($renderedSnapshots) . '</div>'
+            . '<h2>CMS Content Snapshots</h2>'
+            . '<div class="panel">' . $this->renderPageSnapshotsTable($pageSnapshots) . '</div>'
             . '</body></html>';
     }
 
@@ -74,13 +85,47 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,snapshots:int,recommendations:int}
+     * @return list<array<string,mixed>>
+     */
+    private function fetchRenderedSnapshots(): array
+    {
+        return $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::RENDERED_SNAPSHOT_TABLE)
+            ->orderBy('missing_alt_count', 'DESC')
+            ->addOrderBy('word_count', 'ASC')
+            ->addOrderBy('tstamp', 'DESC')
+            ->setMaxResults(100)
+            ->executeQuery()
+            ->fetchAllAssociative();
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function fetchPageSnapshots(): array
+    {
+        return $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::PAGE_SNAPSHOT_TABLE)
+            ->orderBy('word_count', 'ASC')
+            ->addOrderBy('tstamp', 'DESC')
+            ->setMaxResults(100)
+            ->executeQuery()
+            ->fetchAllAssociative();
+    }
+
+    /**
+     * @return array{gsc:int,pages:int,rendered:int,recommendations:int}
      */
     private function fetchStats(): array
     {
         return [
             'gsc' => $this->countRows(self::GSC_TABLE),
-            'snapshots' => $this->countRows(self::SNAPSHOT_TABLE),
+            'pages' => $this->countRows(self::PAGE_SNAPSHOT_TABLE),
+            'rendered' => $this->countRows(self::RENDERED_SNAPSHOT_TABLE),
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
         ];
     }
@@ -96,15 +141,55 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,snapshots:int,recommendations:int} $stats
+     * @param array{gsc:int,pages:int,rendered:int,recommendations:int} $stats
      */
     private function renderStats(array $stats): string
     {
         return '<div class="stats">'
             . '<div class="stat"><span class="muted">GSC rows</span><strong>' . $stats['gsc'] . '</strong></div>'
-            . '<div class="stat"><span class="muted">Page snapshots</span><strong>' . $stats['snapshots'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">CMS pages</span><strong>' . $stats['pages'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Rendered URLs</span><strong>' . $stats['rendered'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
             . '</div>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $recommendations
+     */
+    private function renderRecommendationsTable(array $recommendations): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Priority</th><th>Status</th><th>Type</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Apply</th>'
+            . '</tr></thead><tbody>'
+            . ($recommendations === [] ? '<tr><td colspan="9" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
+            . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $snapshots
+     */
+    private function renderRenderedSnapshotsTable(array $snapshots): string
+    {
+        return '<table><thead><tr>'
+            . '<th>URL</th><th>Status</th><th>Rendered Title</th><th>Description</th><th>Words</th><th>H1</th><th>Images</th><th>Links</th><th>Issues</th>'
+            . '</tr></thead><tbody>'
+            . ($snapshots === [] ? '<tr><td colspan="9" class="muted">No rendered snapshots yet. Run <code>vendor/bin/typo3 seo:rendered:snapshot</code>.</td></tr>' : '')
+            . implode('', array_map($this->renderRenderedSnapshotRow(...), $snapshots))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $snapshots
+     */
+    private function renderPageSnapshotsTable(array $snapshots): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Page</th><th>SEO Title</th><th>Description</th><th>H1</th><th>Words</th><th>Robots</th><th>Content Preview</th>'
+            . '</tr></thead><tbody>'
+            . ($snapshots === [] ? '<tr><td colspan="7" class="muted">No CMS snapshots yet. Run <code>vendor/bin/typo3 seo:pages:snapshot</code>.</td></tr>' : '')
+            . implode('', array_map($this->renderPageSnapshotRow(...), $snapshots))
+            . '</tbody></table>';
     }
 
     /**
@@ -120,23 +205,101 @@ final class SeoAssistantModuleController
             $metadata .= '<strong>Description:</strong> ' . $this->escape((string)$row['proposed_description']);
         }
         if ($metadata === '') {
-            $metadata = '<span class="muted">No metadata proposal</span>';
+            $metadata = '<span class="muted">Manual review</span>';
         }
 
-        $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
+        $applyCommand = (int)($row['page_uid'] ?? 0) > 0 && ($row['proposed_seo_title'] !== '' || $row['proposed_description'] !== '')
+            ? 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes'
+            : 'Manual content/template change';
 
         return '<tr>'
             . '<td class="priority">' . (int)($row['priority'] ?? 0) . '</td>'
             . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
             . '<td>' . $this->escape((string)($row['recommendation_type'] ?? '')) . '</td>'
-            . '<td class="url"><a href="' . $this->escape((string)($row['page_url'] ?? '')) . '" target="_blank" rel="noreferrer">'
-            . $this->escape((string)($row['page_url'] ?? '')) . '</a><br><span class="muted">page uid: ' . (int)($row['page_uid'] ?? 0) . '</span></td>'
+            . '<td class="url">' . $this->renderUrl((string)($row['page_url'] ?? '')) . '<br><span class="muted">page uid: ' . (int)($row['page_uid'] ?? 0) . '</span></td>'
             . '<td>' . $this->escape((string)($row['query_text'] ?? '')) . '</td>'
             . '<td>' . nl2br($this->escape((string)($row['issue'] ?? ''))) . '</td>'
             . '<td>' . nl2br($this->escape((string)($row['recommendation'] ?? ''))) . '</td>'
             . '<td>' . $metadata . '</td>'
             . '<td><code>' . $this->escape($applyCommand) . '</code></td>'
             . '</tr>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderRenderedSnapshotRow(array $row): string
+    {
+        $issues = json_decode((string)($row['issues_json'] ?? '[]'), true);
+        $issueHtml = '<span class="muted">No issues</span>';
+        if (is_array($issues) && $issues !== []) {
+            $issueHtml = '<div class="issues">' . implode('', array_map($this->renderIssuePill(...), $issues)) . '</div>';
+        }
+
+        return '<tr>'
+            . '<td class="url">' . $this->renderUrl((string)($row['url'] ?? '')) . '</td>'
+            . '<td>' . (int)($row['http_status'] ?? 0) . '</td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['html_title'] ?? ''), 90)) . '</td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['meta_description'] ?? ''), 120)) . '</td>'
+            . '<td>' . (int)($row['word_count'] ?? 0) . '</td>'
+            . '<td>' . (int)($row['h1_count'] ?? 0) . '</td>'
+            . '<td>' . (int)($row['image_count'] ?? 0) . ' / missing alt ' . (int)($row['missing_alt_count'] ?? 0) . '</td>'
+            . '<td>internal ' . (int)($row['internal_link_count'] ?? 0) . '<br>external ' . (int)($row['external_link_count'] ?? 0) . '</td>'
+            . '<td>' . $issueHtml . '</td>'
+            . '</tr>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderPageSnapshotRow(array $row): string
+    {
+        return '<tr>'
+            . '<td class="url">' . $this->renderUrl((string)($row['page_url'] ?? '')) . '<br><span class="muted">page uid: ' . (int)($row['page_uid'] ?? 0) . '</span></td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['seo_title'] ?: $row['title'] ?? ''), 90)) . '</td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['description'] ?? ''), 120)) . '</td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['h1'] ?? ''), 80)) . '</td>'
+            . '<td>' . (int)($row['word_count'] ?? 0) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['robots'] ?? '')) . '</span></td>'
+            . '<td>' . $this->escape($this->shorten((string)($row['content_text'] ?? ''), 180)) . '</td>'
+            . '</tr>';
+    }
+
+    /**
+     * @param array<string,mixed> $issue
+     */
+    private function renderIssuePill(array $issue): string
+    {
+        $severity = (string)($issue['severity'] ?? 'notice');
+        $code = (string)($issue['code'] ?? 'issue');
+        $class = match ($severity) {
+            'critical' => 'pill pill-critical',
+            'warning' => 'pill pill-warning',
+            default => 'pill pill-notice',
+        };
+
+        return '<span class="' . $class . '" title="' . $this->escape((string)($issue['message'] ?? '')) . '">'
+            . $this->escape($code)
+            . '</span>';
+    }
+
+    private function renderUrl(string $url): string
+    {
+        if ($url === '') {
+            return '<span class="muted">No URL</span>';
+        }
+
+        return '<a href="' . $this->escape($url) . '" target="_blank" rel="noreferrer">' . $this->escape($url) . '</a>';
+    }
+
+    private function shorten(string $value, int $limit): string
+    {
+        $value = trim($value);
+        if (mb_strlen($value) <= $limit) {
+            return $value;
+        }
+
+        return rtrim(mb_substr($value, 0, max(0, $limit - 1))) . '...';
     }
 
     private function escape(string $value): string

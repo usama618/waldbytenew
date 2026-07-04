@@ -11,6 +11,7 @@ final class RecommendationService
 {
     private const GSC_TABLE = 'tx_seoassistant_gsc_row';
     private const SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
+    private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
 
     public function __construct(
@@ -20,11 +21,12 @@ final class RecommendationService
     ) {}
 
     /**
-     * @return array{evaluated:int,stored:int,aiUsed:int,aiConfigured:bool}
+     * @return array{evaluated:int,renderedEvaluated:int,stored:int,aiUsed:int,aiConfigured:bool}
      */
     public function generate(int $minImpressions = 20, int $limit = 100, bool $useAi = true, int $aiLimit = 10): array
     {
         $snapshots = $this->fetchSnapshotsByUrl();
+        $renderedSnapshots = $this->fetchRenderedSnapshotsByUrl();
         $candidates = $this->fetchGscCandidates($minImpressions, $limit);
         $stored = 0;
         $aiUsed = 0;
@@ -37,7 +39,8 @@ final class RecommendationService
             }
 
             $snapshot = $snapshots[$this->urlNormalizer->normalize($pageUrl)] ?? null;
-            $recommendation = $this->buildRuleBasedRecommendation($candidate, $snapshot);
+            $renderedSnapshot = $renderedSnapshots[$this->urlNormalizer->normalize($pageUrl)] ?? null;
+            $recommendation = $this->buildRuleBasedRecommendation($candidate, $snapshot, $renderedSnapshot);
             if ($recommendation === null) {
                 continue;
             }
@@ -60,6 +63,15 @@ final class RecommendationService
                         'word_count' => (int)($snapshot['word_count'] ?? 0),
                         'content_excerpt' => mb_substr((string)($snapshot['content_text'] ?? ''), 0, 2500),
                     ],
+                    'rendered_page' => [
+                        'title' => (string)($renderedSnapshot['html_title'] ?? ''),
+                        'description' => (string)($renderedSnapshot['meta_description'] ?? ''),
+                        'robots' => (string)($renderedSnapshot['robots'] ?? ''),
+                        'word_count' => (int)($renderedSnapshot['word_count'] ?? 0),
+                        'h1_count' => (int)($renderedSnapshot['h1_count'] ?? 0),
+                        'missing_alt_count' => (int)($renderedSnapshot['missing_alt_count'] ?? 0),
+                        'visible_text_excerpt' => mb_substr((string)($renderedSnapshot['visible_text'] ?? ''), 0, 2500),
+                    ],
                     'rule_based_issue' => $recommendation['issue'],
                     'rule_based_recommendation' => $recommendation['recommendation'],
                 ]);
@@ -80,8 +92,12 @@ final class RecommendationService
             $stored += $this->storeRecommendation($recommendation);
         }
 
+        $renderedStored = $this->generateRenderedRecommendations($renderedSnapshots, $snapshots);
+        $stored += $renderedStored;
+
         return [
             'evaluated' => count($candidates),
+            'renderedEvaluated' => count($renderedSnapshots),
             'stored' => $stored,
             'aiUsed' => $aiUsed,
             'aiConfigured' => $this->openAiRecommendationService->isConfigured(),
@@ -103,6 +119,26 @@ final class RecommendationService
         $snapshots = [];
         foreach ($rows as $row) {
             $snapshots[$this->urlNormalizer->normalize((string)($row['page_url'] ?? ''))] = $row;
+        }
+
+        return $snapshots;
+    }
+
+    /**
+     * @return array<string,array<string,mixed>>
+     */
+    private function fetchRenderedSnapshotsByUrl(): array
+    {
+        $connection = $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE);
+        $rows = $connection->createQueryBuilder()
+            ->select('*')
+            ->from(self::RENDERED_SNAPSHOT_TABLE)
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $snapshots = [];
+        foreach ($rows as $row) {
+            $snapshots[$this->urlNormalizer->normalize((string)($row['url'] ?? ''))] = $row;
         }
 
         return $snapshots;
@@ -137,9 +173,10 @@ final class RecommendationService
     /**
      * @param array<string,mixed> $candidate
      * @param array<string,mixed>|null $snapshot
+     * @param array<string,mixed>|null $renderedSnapshot
      * @return array<string,mixed>|null
      */
-    private function buildRuleBasedRecommendation(array $candidate, ?array $snapshot): ?array
+    private function buildRuleBasedRecommendation(array $candidate, ?array $snapshot, ?array $renderedSnapshot): ?array
     {
         $pageUrl = (string)$candidate['page_url'];
         $query = trim((string)$candidate['query_text']);
@@ -152,15 +189,20 @@ final class RecommendationService
             (string)($snapshot['description'] ?? ''),
             (string)($snapshot['h1'] ?? ''),
             (string)($snapshot['content_text'] ?? ''),
+            (string)($renderedSnapshot['html_title'] ?? ''),
+            (string)($renderedSnapshot['meta_description'] ?? ''),
+            (string)($renderedSnapshot['visible_text'] ?? ''),
         ]);
         $queryCovered = $this->textCoversQuery($pageText, $query);
+        $descriptionMissing = trim((string)($snapshot['description'] ?? '')) === ''
+            && trim((string)($renderedSnapshot['meta_description'] ?? '')) === '';
 
         $type = '';
         $priority = 50;
         $issue = '';
         $action = '';
 
-        if ($snapshot !== null && trim((string)($snapshot['description'] ?? '')) === '') {
+        if (($snapshot !== null || $renderedSnapshot !== null) && $descriptionMissing) {
             $type = 'missing_meta_description';
             $priority = 95;
             $issue = 'Die Seite hat keine Meta Description, obwohl sie Suchimpressionen erzeugt.';
@@ -186,7 +228,7 @@ final class RecommendationService
             return null;
         }
 
-        $proposedTitle = $this->buildProposedTitle($query, $snapshot);
+        $proposedTitle = $this->buildProposedTitle($query, $snapshot, $renderedSnapshot);
         $proposedDescription = $this->buildProposedDescription($query);
 
         return [
@@ -256,12 +298,16 @@ final class RecommendationService
 
     /**
      * @param array<string,mixed>|null $snapshot
+     * @param array<string,mixed>|null $renderedSnapshot
      */
-    private function buildProposedTitle(string $query, ?array $snapshot): string
+    private function buildProposedTitle(string $query, ?array $snapshot, ?array $renderedSnapshot = null): string
     {
         $baseTitle = trim((string)($snapshot['seo_title'] ?? ''));
         if ($baseTitle === '') {
             $baseTitle = trim((string)($snapshot['title'] ?? ''));
+        }
+        if ($baseTitle === '') {
+            $baseTitle = trim((string)($renderedSnapshot['html_title'] ?? ''));
         }
 
         $query = trim($query);
@@ -279,6 +325,107 @@ final class RecommendationService
             . ' ankommt und wie Unternehmen in der Region Karlsruhe mehr Sichtbarkeit und qualifizierte Anfragen gewinnen.';
 
         return mb_substr($description, 0, 155);
+    }
+
+    /**
+     * @param array<string,array<string,mixed>> $renderedSnapshots
+     * @param array<string,array<string,mixed>> $cmsSnapshots
+     */
+    private function generateRenderedRecommendations(array $renderedSnapshots, array $cmsSnapshots): int
+    {
+        $stored = 0;
+        foreach ($renderedSnapshots as $normalizedUrl => $renderedSnapshot) {
+            $issues = json_decode((string)($renderedSnapshot['issues_json'] ?? '[]'), true);
+            if (!is_array($issues) || $issues === []) {
+                continue;
+            }
+
+            $cmsSnapshot = $cmsSnapshots[$normalizedUrl] ?? null;
+            foreach ($issues as $issue) {
+                if (!is_array($issue)) {
+                    continue;
+                }
+
+                $recommendation = $this->buildRenderedRecommendation($renderedSnapshot, $cmsSnapshot, $issue);
+                if ($recommendation !== null) {
+                    $stored += $this->storeRecommendation($recommendation);
+                }
+            }
+        }
+
+        return $stored;
+    }
+
+    /**
+     * @param array<string,mixed> $renderedSnapshot
+     * @param array<string,mixed>|null $cmsSnapshot
+     * @param array<string,mixed> $issue
+     * @return array<string,mixed>|null
+     */
+    private function buildRenderedRecommendation(array $renderedSnapshot, ?array $cmsSnapshot, array $issue): ?array
+    {
+        $code = (string)($issue['code'] ?? '');
+        $url = (string)($renderedSnapshot['url'] ?? '');
+        if ($code === '' || $url === '') {
+            return null;
+        }
+
+        $map = [
+            'http_error' => [99, 'Rendered URL returns an HTTP error.', 'Check routing, redirects, publication state and server response for this URL.'],
+            'fetch_failed' => [99, 'Rendered URL could not be fetched.', 'Check whether the URL is reachable from the server and not blocked by routing or TLS issues.'],
+            'noindex' => [98, 'Rendered robots meta contains noindex.', 'Remove noindex if this page should be visible in Google.'],
+            'missing_title' => [96, 'Rendered page has no title tag.', 'Set a clear SEO title for this page.'],
+            'missing_meta_description' => [94, 'Rendered page has no meta description.', 'Add a specific meta description that explains the page value and search intent.'],
+            'missing_h1' => [90, 'Rendered page has no H1.', 'Add one clear primary heading in the relevant content element/template.'],
+            'multiple_h1' => [68, 'Rendered page has multiple H1 headings.', 'Keep one primary H1 and convert secondary headings to H2/H3.'],
+            'missing_image_alt' => [72, 'Rendered page has images without alt text.', 'Add descriptive alt text for content images; decorative images should be handled intentionally.'],
+            'thin_content' => [64, 'Rendered page has thin visible text.', 'Add useful, query-focused content so the page can answer client questions directly.'],
+            'long_title' => [55, 'Rendered title is too long.', 'Shorten the SEO title so the main phrase and brand remain clear.'],
+            'long_meta_description' => [52, 'Rendered meta description is too long.', 'Shorten the description to keep the important value proposition visible in search results.'],
+            'missing_canonical' => [42, 'Rendered page has no canonical URL.', 'Add or verify canonical handling for this page.'],
+            'missing_structured_data' => [35, 'Rendered page has no JSON-LD structured data.', 'Add appropriate Organization, WebSite, Article, Breadcrumb or LocalBusiness schema where relevant.'],
+        ];
+
+        if (!isset($map[$code])) {
+            return null;
+        }
+
+        [$priority, $defaultIssue, $action] = $map[$code];
+        $issueText = trim((string)($issue['message'] ?? ''));
+        if ($issueText === '') {
+            $issueText = $defaultIssue;
+        }
+
+        return [
+            'pid' => 0,
+            'tstamp' => time(),
+            'crdate' => time(),
+            'page_uid' => (int)($cmsSnapshot['page_uid'] ?? 0),
+            'page_url' => $url,
+            'query_text' => '',
+            'recommendation_type' => 'rendered_' . $code,
+            'priority' => $priority,
+            'status' => 'draft',
+            'issue' => $issueText,
+            'recommendation' => $action,
+            'proposed_seo_title' => $code === 'missing_title' ? mb_substr((string)($cmsSnapshot['title'] ?? 'WALDBYTE'), 0, 60) : '',
+            'proposed_description' => $code === 'missing_meta_description'
+                ? 'WALDBYTE entwickelt TYPO3 Websites, Webdesign und Onlineshops fuer Unternehmen in der Region Karlsruhe.'
+                : '',
+            'evidence_json' => json_encode([
+                'rendered_url' => $url,
+                'http_status' => (int)($renderedSnapshot['http_status'] ?? 0),
+                'word_count' => (int)($renderedSnapshot['word_count'] ?? 0),
+                'h1_count' => (int)($renderedSnapshot['h1_count'] ?? 0),
+                'image_count' => (int)($renderedSnapshot['image_count'] ?? 0),
+                'missing_alt_count' => (int)($renderedSnapshot['missing_alt_count'] ?? 0),
+                'issue' => $issue,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'ai_model' => '',
+            'dedupe_hash' => hash('sha256', implode('|', ['rendered', $code, $url])),
+            'approved_at' => 0,
+            'applied_at' => 0,
+        ];
     }
 
     /**

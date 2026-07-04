@@ -48,6 +48,40 @@ CREATE TABLE tx_seoassistant_page_snapshot (
     KEY page_url (page_url(191))
 );
 
+CREATE TABLE tx_seoassistant_rendered_snapshot (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    url varchar(2048) DEFAULT '' NOT NULL,
+    url_hash varchar(64) DEFAULT '' NOT NULL,
+    http_status int(11) unsigned DEFAULT '0' NOT NULL,
+    final_url varchar(2048) DEFAULT '' NOT NULL,
+    html_title varchar(512) DEFAULT '' NOT NULL,
+    meta_description text,
+    canonical_url varchar(2048) DEFAULT '' NOT NULL,
+    robots varchar(128) DEFAULT '' NOT NULL,
+    headings_json mediumtext,
+    links_json mediumtext,
+    images_json mediumtext,
+    structured_data_json mediumtext,
+    visible_text mediumtext,
+    word_count int(11) unsigned DEFAULT '0' NOT NULL,
+    h1_count int(11) unsigned DEFAULT '0' NOT NULL,
+    image_count int(11) unsigned DEFAULT '0' NOT NULL,
+    missing_alt_count int(11) unsigned DEFAULT '0' NOT NULL,
+    internal_link_count int(11) unsigned DEFAULT '0' NOT NULL,
+    external_link_count int(11) unsigned DEFAULT '0' NOT NULL,
+    issues_json mediumtext,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY url_hash (url_hash),
+    KEY url (url(191)),
+    KEY http_status (http_status),
+    KEY missing_alt_count (missing_alt_count),
+    KEY word_count (word_count)
+);
+
 CREATE TABLE tx_seoassistant_recommendation (
     uid int(11) unsigned NOT NULL auto_increment,
     pid int(11) DEFAULT '0' NOT NULL,

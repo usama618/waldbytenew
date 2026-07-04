@@ -20,7 +20,7 @@ AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` or `SEO_ASSISTANT_OPENAI_MODEL
 
 ## First run
 
-After deployment, run TYPO3 extension setup so the three tables from `ext_tables.sql` exist:
+After deployment, run TYPO3 extension setup so the tables from `ext_tables.sql` exist:
 
 ```bash
 vendor/bin/typo3 extension:setup
@@ -31,10 +31,11 @@ Then build the data pipeline:
 ```bash
 vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
+vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate
 ```
 
-Open the TYPO3 backend module `Web > SEO Assistant` to review drafts.
+Open the TYPO3 backend module `Web > SEO Assistant` to review drafts, rendered URL issues, and CMS content snapshots centrally.
 
 ## Safe apply flow
 
@@ -55,5 +56,8 @@ Run this daily or weekly on the live server:
 cd /var/www/waldbytenew/current
 vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
+vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=10
 ```
+
+The rendered snapshot command crawls only the configured same-host URLs. It uses CMS page snapshots and Search Console page URLs as its source list.

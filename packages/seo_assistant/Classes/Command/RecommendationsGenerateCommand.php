@@ -48,8 +48,9 @@ final class RecommendationsGenerateCommand extends Command
         }
 
         $io->success(sprintf(
-            'Recommendation generation complete: evaluated %d candidates, stored %d drafts, AI refinements used %d. AI configured: %s.',
+            'Recommendation generation complete: evaluated %d GSC candidates and %d rendered URLs, stored %d drafts, AI refinements used %d. AI configured: %s.',
             $result['evaluated'],
+            $result['renderedEvaluated'],
             $result['stored'],
             $result['aiUsed'],
             $result['aiConfigured'] ? 'yes' : 'no'
