@@ -6,3 +6,6 @@ services:
 
   App\SeoAssistant\:
     resource: '../Classes/'
+
+  App\SeoAssistant\Controller\SeoAssistantModuleController:
+    public: true
