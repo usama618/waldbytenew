@@ -21,6 +21,8 @@ set('bin/php', getenv('DEPLOY_PHP') ?: 'php');
 set('bin/composer', getenv('DEPLOY_COMPOSER') ?: 'composer');
 set('composer_options', '--no-dev --prefer-dist --no-progress --no-interaction --optimize-autoloader');
 set('log_files', 'var/log/typo3_*.log');
+set('web_group', getenv('WEB_GROUP') ?: 'www-data');
+set('runtime_permission_sudo', (bool)(getenv('RUNTIME_PERMISSION_SUDO') ?: false));
 
 host('production')
     ->set('hostname', getenv('DEPLOY_HOST') ?: 'waldbyte.de')
@@ -117,6 +119,16 @@ task('typo3:prepare_runtime_dirs', function () {
     run('mkdir -p public/fileadmin public/typo3temp public/typo3temp/assets var/cache var/charset var/labels var/lock var/log var/session var/transient');
 });
 
+desc('TYPO3 runtime permissions');
+task('typo3:runtime_permissions', function () {
+    $sudo = get('runtime_permission_sudo') ? 'sudo -n ' : '';
+
+    run('mkdir -p {{release_path}}/var/cache');
+    run($sudo . 'chgrp -R {{web_group}} {{release_path}}/var');
+    run($sudo . 'chmod -R g+rwX {{release_path}}/var');
+    run($sudo . 'find {{release_path}}/var -type d -exec chmod g+s {} \;');
+});
+
 desc('TYPO3 system cache warmup');
 task('typo3:cache:warmup', function () {
     cd('{{release_path}}');
@@ -141,6 +153,7 @@ task('deploy', [
     'deploy:writable',
     'deploy:vendors',
     'typo3:prepare_runtime_dirs',
+    'typo3:runtime_permissions',
     'typo3:extension:setup',
     'typo3:cache:warmup',
     'deploy:clear_paths',
