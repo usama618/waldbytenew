@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\SeoAssistant\Command;
 
+use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\RecommendationService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -18,6 +19,7 @@ final class RecommendationsGenerateCommand extends Command
 {
     public function __construct(
         private readonly RecommendationService $recommendationService,
+        private readonly ConfigurationService $configuration,
     ) {
         parent::__construct();
     }
@@ -25,9 +27,9 @@ final class RecommendationsGenerateCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addOption('min-impressions', null, InputOption::VALUE_REQUIRED, 'Minimum impressions for a query/page candidate.', '20')
-            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum GSC candidates to evaluate.', '100')
-            ->addOption('ai-limit', null, InputOption::VALUE_REQUIRED, 'Maximum recommendations to refine with AI when configured.', '10')
+            ->addOption('min-impressions', null, InputOption::VALUE_REQUIRED, 'Minimum impressions for a query/page candidate.', (string)$this->configuration->getMinImpressions())
+            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum GSC candidates to evaluate.', (string)$this->configuration->getRecommendationLimit())
+            ->addOption('ai-limit', null, InputOption::VALUE_REQUIRED, 'Maximum recommendations to refine with AI when configured.', (string)$this->configuration->getAiLimit())
             ->addOption('disable-ai', null, InputOption::VALUE_NONE, 'Use only rule-based recommendations.');
     }
 

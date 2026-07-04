@@ -2,9 +2,22 @@
 
 The SEO assistant is implemented as `app/seo-assistant` in `packages/seo_assistant`.
 
-## Live environment variables
+## Configuration
 
-Configure these on the server environment, in the process manager, or in a non-committed TYPO3 config file:
+Configure the extension in the TYPO3 backend:
+
+`Admin Tools > Settings > Extension Configuration > SEO Assistant`
+
+There you can set:
+
+- Search Console property
+- Google OAuth client ID, client secret and refresh token
+- public base URL
+- rendered snapshot URL limit
+- OpenAI API key/model/API URL
+- minimum impressions and recommendation limits
+
+Environment variables are still supported and take precedence over backend configuration. Use them on live if you do not want secrets stored in TYPO3 system configuration:
 
 ```bash
 SEO_ASSISTANT_GSC_SITE_URL='sc-domain:waldbyte.de'
@@ -25,6 +38,8 @@ After deployment, run TYPO3 extension setup so the tables from `ext_tables.sql` 
 ```bash
 vendor/bin/typo3 extension:setup
 ```
+
+Then open the backend Extension Configuration once and save the SEO Assistant values.
 
 Then build the data pipeline:
 

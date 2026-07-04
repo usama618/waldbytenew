@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\SeoAssistant\Command;
 
+use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\RenderedSnapshotService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -18,6 +19,7 @@ final class RenderedSnapshotCommand extends Command
 {
     public function __construct(
         private readonly RenderedSnapshotService $renderedSnapshotService,
+        private readonly ConfigurationService $configuration,
     ) {
         parent::__construct();
     }
@@ -27,7 +29,7 @@ final class RenderedSnapshotCommand extends Command
         $this
             ->addOption('base-url', null, InputOption::VALUE_REQUIRED, 'Public base URL used for same-host checks.')
             ->addOption('url', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Specific URL or path to crawl. Can be used multiple times.')
-            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum URLs to crawl.', '250')
+            ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum URLs to crawl.', (string)$this->configuration->getRenderedSnapshotLimit())
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Crawl and parse URLs but do not write rendered snapshot rows.');
     }
 

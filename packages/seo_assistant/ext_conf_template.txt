@@ -1,0 +1,51 @@
+#####################
+### Google Search ###
+#####################
+
+# cat=Google Search Console; type=string; label=Search Console property: Use sc-domain:waldbyte.de or https://waldbyte.de/
+gscSiteUrl = sc-domain:waldbyte.de
+
+# cat=Google Search Console; type=string; label=Google OAuth client ID: Can also be provided by SEO_ASSISTANT_GOOGLE_CLIENT_ID
+googleClientId =
+
+# cat=Google Search Console; type=string; label=Google OAuth client secret: Can also be provided by SEO_ASSISTANT_GOOGLE_CLIENT_SECRET
+googleClientSecret =
+
+# cat=Google Search Console; type=string; label=Google OAuth refresh token: Can also be provided by SEO_ASSISTANT_GOOGLE_REFRESH_TOKEN
+googleRefreshToken =
+
+################
+### Frontend ###
+################
+
+# cat=Frontend; type=string; label=Public base URL: Used for CMS and rendered snapshots
+baseUrl = https://waldbyte.de/
+
+# cat=Frontend; type=int+; label=Rendered snapshot URL limit
+renderedSnapshotLimit = 250
+
+##########
+### AI ###
+##########
+
+# cat=AI; type=string; label=OpenAI API key: Optional. Can also be provided by SEO_ASSISTANT_OPENAI_API_KEY
+openAiApiKey =
+
+# cat=AI; type=string; label=OpenAI model: Optional. Required only when AI refinement should run
+openAiModel =
+
+# cat=AI; type=string; label=OpenAI Responses API URL
+openAiResponsesUrl = https://api.openai.com/v1/responses
+
+# cat=AI; type=int+; label=AI refinement limit per generation run
+aiLimit = 10
+
+#######################
+### Recommendations ###
+#######################
+
+# cat=Recommendations; type=int+; label=Minimum Search Console impressions for query/page recommendations
+minImpressions = 20
+
+# cat=Recommendations; type=int+; label=Maximum Search Console candidates per generation run
+recommendationLimit = 100

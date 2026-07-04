@@ -4,7 +4,11 @@ This TYPO3 extension imports Google Search Console data, snapshots TYPO3 page SE
 
 ## Environment variables
 
-Set these on the live server or in DDEV, not in Git:
+You can configure the extension in the TYPO3 backend under:
+
+`Admin Tools > Settings > Extension Configuration > SEO Assistant`
+
+Environment variables are still supported and take precedence over backend configuration. Use them on live if you do not want secrets stored in TYPO3 system configuration:
 
 - `SEO_ASSISTANT_GSC_SITE_URL`: Search Console property, for example `sc-domain:waldbyte.de` or `https://waldbyte.de/`
 - `SEO_ASSISTANT_GOOGLE_CLIENT_ID`
@@ -13,6 +17,8 @@ Set these on the live server or in DDEV, not in Git:
 - `SEO_ASSISTANT_BASE_URL`: public base URL used for page snapshots, for example `https://waldbyte.de/`
 - `SEO_ASSISTANT_OPENAI_API_KEY`: optional, enables AI text suggestions
 - `SEO_ASSISTANT_OPENAI_MODEL`: optional but required for AI mode, for example the model you want to use with the OpenAI Responses API
+
+The backend configuration also contains default limits for rendered URL snapshots, minimum impressions, recommendation candidates, and AI refinements.
 
 ## Commands
 
