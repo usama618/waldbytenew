@@ -28,6 +28,11 @@ final class SeoAssistantModuleController
 
     private function render(): string
     {
+        $missingTables = $this->findMissingTables();
+        if ($missingTables !== []) {
+            return $this->renderMissingTables($missingTables);
+        }
+
         $recommendations = $this->fetchRecommendations();
         $aiRuns = $this->fetchAiRuns();
         $renderedSnapshots = $this->fetchRenderedSnapshots();
@@ -70,6 +75,49 @@ final class SeoAssistantModuleController
             . '<h2>CMS Content Snapshots</h2>'
             . '<div class="panel">' . $this->renderPageSnapshotsTable($pageSnapshots) . '</div>'
             . '</body></html>';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function findMissingTables(): array
+    {
+        $tableNames = $this->connectionPool
+            ->getConnectionForTable(self::RECOMMENDATION_TABLE)
+            ->getSchemaInformation()
+            ->listTableNames();
+
+        $requiredTables = [
+            self::GSC_TABLE,
+            self::PAGE_SNAPSHOT_TABLE,
+            self::RENDERED_SNAPSHOT_TABLE,
+            self::RECOMMENDATION_TABLE,
+            self::AI_RUN_TABLE,
+        ];
+
+        return array_values(array_diff($requiredTables, $tableNames));
+    }
+
+    /**
+     * @param list<string> $missingTables
+     */
+    private function renderMissingTables(array $missingTables): string
+    {
+        return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>SEO Assistant Setup Required</title>'
+            . '<style>'
+            . 'body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;background:#f6f7f9;color:#1f2933;}'
+            . '.box{max-width:860px;background:#fff;border:1px solid #d9dde3;border-radius:6px;padding:18px;}'
+            . 'h1{font-size:24px;margin:0 0 12px;}'
+            . 'p{line-height:1.5;}'
+            . 'code{display:block;background:#111827;color:#f8fafc;border-radius:4px;padding:12px;margin:10px 0;white-space:pre-wrap;}'
+            . '.missing{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#991b1b;}'
+            . '</style></head><body><div class="box">'
+            . '<h1>SEO Assistant database setup required</h1>'
+            . '<p>The extension is loaded, but its database tables are missing. Run TYPO3 extension setup on the live release.</p>'
+            . '<code>cd /var/www/waldbytenew/current' . "\n" . 'php vendor/bin/typo3 extension:setup' . "\n" . 'php vendor/bin/typo3 cache:flush</code>'
+            . '<p>Missing tables:</p><ul>'
+            . implode('', array_map(fn(string $table): string => '<li class="missing">' . $this->escape($table) . '</li>', $missingTables))
+            . '</ul></div></body></html>';
     }
 
     /**

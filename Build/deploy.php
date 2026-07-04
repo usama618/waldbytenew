@@ -12,7 +12,7 @@ require_once $rsyncRecipe;
 
 set('application', 'waldbyte');
 set('default_stage', 'production');
-set('keep_releases', (int)(getenv('KEEP_RELEASES') ?: 5));
+set('keep_releases', (int)(getenv('KEEP_RELEASES') ?: 2));
 set('default_timeout', 900);
 
 set('typo3_webroot', 'public');
