@@ -31,13 +31,13 @@ renderedSnapshotLimit = 250
 # cat=AI; type=string; label=OpenAI API key: Optional. Can also be provided by SEO_ASSISTANT_OPENAI_API_KEY
 openAiApiKey =
 
-# cat=AI; type=string; label=OpenAI model: Optional. Required only when AI refinement should run
+# cat=AI; type=string; label=OpenAI model: Optional. Required only when AI generation should run
 openAiModel =
 
 # cat=AI; type=string; label=OpenAI Responses API URL
 openAiResponsesUrl = https://api.openai.com/v1/responses
 
-# cat=AI; type=int+; label=AI refinement limit per generation run
+# cat=AI; type=int+; label=AI page analysis limit per generation run
 aiLimit = 10
 
 #######################

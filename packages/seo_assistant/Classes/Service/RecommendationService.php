@@ -18,10 +18,11 @@ final class RecommendationService
         private readonly ConnectionPool $connectionPool,
         private readonly UrlNormalizer $urlNormalizer,
         private readonly OpenAiRecommendationService $openAiRecommendationService,
+        private readonly AiRunHistoryService $aiRunHistoryService,
     ) {}
 
     /**
-     * @return array{evaluated:int,renderedEvaluated:int,stored:int,aiUsed:int,aiConfigured:bool}
+     * @return array{evaluated:int,renderedEvaluated:int,stored:int,aiUsed:int,aiConfigured:bool,generationMode:string,fallbackUsed:bool}
      */
     public function generate(int $minImpressions = 20, int $limit = 100, bool $useAi = true, int $aiLimit = 10): array
     {
@@ -30,70 +31,31 @@ final class RecommendationService
         $candidates = $this->fetchGscCandidates($minImpressions, $limit);
         $stored = 0;
         $aiUsed = 0;
+        $fallbackUsed = false;
 
-        foreach ($candidates as $candidate) {
-            $pageUrl = (string)($candidate['page_url'] ?? '');
-            $query = trim((string)($candidate['query_text'] ?? ''));
-            if ($pageUrl === '' || $query === '') {
-                continue;
+        if ($useAi && $this->openAiRecommendationService->isConfigured()) {
+            $recentRuns = $this->aiRunHistoryService->getRecentRuns();
+            $aiResult = $this->generateAiFirstRecommendations($candidates, $snapshots, $renderedSnapshots, $aiLimit, $recentRuns);
+            $stored = $aiResult['stored'];
+            $aiUsed = $aiResult['aiUsed'];
+
+            if ($aiResult['generated'] > 0) {
+                return [
+                    'evaluated' => count($candidates),
+                    'renderedEvaluated' => count($renderedSnapshots),
+                    'stored' => $stored,
+                    'aiUsed' => $aiUsed,
+                    'aiConfigured' => true,
+                    'generationMode' => 'ai',
+                    'fallbackUsed' => false,
+                ];
             }
 
-            $snapshot = $snapshots[$this->urlNormalizer->normalize($pageUrl)] ?? null;
-            $renderedSnapshot = $renderedSnapshots[$this->urlNormalizer->normalize($pageUrl)] ?? null;
-            $recommendation = $this->buildRuleBasedRecommendation($candidate, $snapshot, $renderedSnapshot);
-            if ($recommendation === null) {
-                continue;
-            }
-
-            if ($useAi && $aiUsed < $aiLimit && $this->openAiRecommendationService->isConfigured()) {
-                $aiRecommendation = $this->openAiRecommendationService->createRecommendation([
-                    'page_url' => $pageUrl,
-                    'query' => $query,
-                    'gsc' => [
-                        'clicks' => (float)($candidate['clicks_sum'] ?? 0),
-                        'impressions' => (float)($candidate['impressions_sum'] ?? 0),
-                        'ctr' => $this->calculateCtr($candidate),
-                        'position' => (float)($candidate['avg_position'] ?? 0),
-                    ],
-                    'page' => [
-                        'title' => (string)($snapshot['title'] ?? ''),
-                        'seo_title' => (string)($snapshot['seo_title'] ?? ''),
-                        'description' => (string)($snapshot['description'] ?? ''),
-                        'h1' => (string)($snapshot['h1'] ?? ''),
-                        'word_count' => (int)($snapshot['word_count'] ?? 0),
-                        'content_excerpt' => mb_substr((string)($snapshot['content_text'] ?? ''), 0, 2500),
-                    ],
-                    'rendered_page' => [
-                        'title' => (string)($renderedSnapshot['html_title'] ?? ''),
-                        'description' => (string)($renderedSnapshot['meta_description'] ?? ''),
-                        'robots' => (string)($renderedSnapshot['robots'] ?? ''),
-                        'word_count' => (int)($renderedSnapshot['word_count'] ?? 0),
-                        'h1_count' => (int)($renderedSnapshot['h1_count'] ?? 0),
-                        'missing_alt_count' => (int)($renderedSnapshot['missing_alt_count'] ?? 0),
-                        'visible_text_excerpt' => mb_substr((string)($renderedSnapshot['visible_text'] ?? ''), 0, 2500),
-                    ],
-                    'rule_based_issue' => $recommendation['issue'],
-                    'rule_based_recommendation' => $recommendation['recommendation'],
-                ]);
-
-                if ($aiRecommendation !== null) {
-                    $recommendation = array_merge($recommendation, [
-                        'issue' => $aiRecommendation['issue'] !== '' ? $aiRecommendation['issue'] : $recommendation['issue'],
-                        'recommendation' => $aiRecommendation['recommendation'] !== '' ? $aiRecommendation['recommendation'] : $recommendation['recommendation'],
-                        'proposed_seo_title' => $aiRecommendation['proposed_seo_title'] !== '' ? $aiRecommendation['proposed_seo_title'] : $recommendation['proposed_seo_title'],
-                        'proposed_description' => $aiRecommendation['proposed_description'] !== '' ? $aiRecommendation['proposed_description'] : $recommendation['proposed_description'],
-                        'priority' => $aiRecommendation['priority'],
-                        'ai_model' => $this->openAiRecommendationService->getModel(),
-                    ]);
-                    $aiUsed++;
-                }
-            }
-
-            $stored += $this->storeRecommendation($recommendation);
+            $fallbackUsed = true;
         }
 
-        $renderedStored = $this->generateRenderedRecommendations($renderedSnapshots, $snapshots);
-        $stored += $renderedStored;
+        $stored = $this->generateRuleBasedRecommendations($candidates, $snapshots, $renderedSnapshots);
+        $stored += $this->generateRenderedRecommendations($renderedSnapshots, $snapshots);
 
         return [
             'evaluated' => count($candidates),
@@ -101,6 +63,8 @@ final class RecommendationService
             'stored' => $stored,
             'aiUsed' => $aiUsed,
             'aiConfigured' => $this->openAiRecommendationService->isConfigured(),
+            'generationMode' => 'rule',
+            'fallbackUsed' => $fallbackUsed,
         ];
     }
 
@@ -168,6 +132,287 @@ final class RecommendationService
             ->setParameter('minImpressions', max(1, $minImpressions), Connection::PARAM_INT);
 
         return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * @param list<array<string,mixed>> $candidates
+     * @param array<string,array<string,mixed>> $snapshots
+     * @param array<string,array<string,mixed>> $renderedSnapshots
+     * @param list<array<string,mixed>> $recentRuns
+     * @return array{stored:int,aiUsed:int,generated:int}
+     */
+    private function generateAiFirstRecommendations(array $candidates, array $snapshots, array $renderedSnapshots, int $aiLimit, array $recentRuns): array
+    {
+        $stored = 0;
+        $aiUsed = 0;
+        $generated = 0;
+        $storedRecommendations = [];
+        $contexts = $this->buildAiPageContexts($candidates, $snapshots, $renderedSnapshots, max(1, $aiLimit), $recentRuns);
+
+        foreach ($contexts as $context) {
+            $aiRecommendations = $this->openAiRecommendationService->createRecommendations($context, 4);
+            if ($aiRecommendations === []) {
+                continue;
+            }
+
+            $aiUsed++;
+            $generated += count($aiRecommendations);
+            foreach ($aiRecommendations as $aiRecommendation) {
+                $recommendation = $this->buildRecommendationFromAi($aiRecommendation, $context);
+                $storedRecommendations[] = $recommendation;
+                $stored += $this->storeRecommendation($recommendation);
+            }
+        }
+
+        $this->aiRunHistoryService->recordRun(
+            $this->openAiRecommendationService->getModel(),
+            'ai',
+            count($contexts),
+            $generated,
+            $stored,
+            $contexts,
+            $storedRecommendations
+        );
+
+        return [
+            'stored' => $stored,
+            'aiUsed' => $aiUsed,
+            'generated' => $generated,
+        ];
+    }
+
+    /**
+     * @param list<array<string,mixed>> $candidates
+     * @param array<string,array<string,mixed>> $snapshots
+     * @param array<string,array<string,mixed>> $renderedSnapshots
+     * @param list<array<string,mixed>> $recentRuns
+     * @return list<array<string,mixed>>
+     */
+    private function buildAiPageContexts(array $candidates, array $snapshots, array $renderedSnapshots, int $limit, array $recentRuns): array
+    {
+        $grouped = [];
+        foreach ($candidates as $candidate) {
+            $pageUrl = (string)($candidate['page_url'] ?? '');
+            if ($pageUrl === '') {
+                continue;
+            }
+
+            $normalizedUrl = $this->urlNormalizer->normalize($pageUrl);
+            $grouped[$normalizedUrl]['page_url'] ??= $pageUrl;
+            $grouped[$normalizedUrl]['queries'][] = [
+                'query' => (string)($candidate['query_text'] ?? ''),
+                'clicks' => (float)($candidate['clicks_sum'] ?? 0),
+                'impressions' => (float)($candidate['impressions_sum'] ?? 0),
+                'ctr' => $this->calculateCtr($candidate),
+                'position' => (float)($candidate['avg_position'] ?? 0),
+            ];
+        }
+
+        foreach ($renderedSnapshots as $normalizedUrl => $renderedSnapshot) {
+            $issues = json_decode((string)($renderedSnapshot['issues_json'] ?? '[]'), true);
+            if ($issues === [] || !is_array($issues)) {
+                continue;
+            }
+            $grouped[$normalizedUrl]['page_url'] ??= (string)($renderedSnapshot['url'] ?? '');
+            $grouped[$normalizedUrl]['has_rendered_issues'] = true;
+        }
+
+        $contexts = [];
+        foreach ($grouped as $normalizedUrl => $group) {
+            $pageUrl = (string)($group['page_url'] ?? '');
+            if ($pageUrl === '') {
+                continue;
+            }
+
+            $cmsSnapshot = $snapshots[$normalizedUrl] ?? null;
+            $renderedSnapshot = $renderedSnapshots[$normalizedUrl] ?? null;
+            $queries = $group['queries'] ?? [];
+            if (is_array($queries)) {
+                usort($queries, static fn(array $a, array $b): int => (int)($b['impressions'] <=> $a['impressions']));
+            }
+
+            $contexts[] = [
+                'mode' => 'ai_first_seo_recommendation',
+                'page_url' => $pageUrl,
+                'page_uid' => (int)($cmsSnapshot['page_uid'] ?? 0),
+                'business_context' => [
+                    'brand' => 'WALDBYTE',
+                    'market' => 'Deutschland',
+                    'local_focus' => 'Region Karlsruhe',
+                    'website_type' => 'TYPO3 agency website',
+                ],
+                'search_console_queries' => array_slice(array_values($queries), 0, 8),
+                'cms_page' => $this->buildCmsSnapshotContext($cmsSnapshot),
+                'rendered_page' => $this->buildRenderedSnapshotContext($renderedSnapshot),
+                'recent_ai_run_memory' => $recentRuns,
+                'instruction' => 'Find the highest impact SEO actions for this page. Prefer concrete metadata, content section, internal link, image alt, structured data, or technical indexing recommendations. Return no recommendation if no useful action exists.',
+            ];
+
+            if (count($contexts) >= $limit) {
+                break;
+            }
+        }
+
+        return $contexts;
+    }
+
+    /**
+     * @param array<string,mixed>|null $snapshot
+     * @return array<string,mixed>
+     */
+    private function buildCmsSnapshotContext(?array $snapshot): array
+    {
+        if ($snapshot === null) {
+            return [];
+        }
+
+        return [
+            'title' => (string)($snapshot['title'] ?? ''),
+            'seo_title' => (string)($snapshot['seo_title'] ?? ''),
+            'description' => (string)($snapshot['description'] ?? ''),
+            'slug' => (string)($snapshot['slug'] ?? ''),
+            'h1' => (string)($snapshot['h1'] ?? ''),
+            'robots' => (string)($snapshot['robots'] ?? ''),
+            'canonical_url' => (string)($snapshot['canonical_url'] ?? ''),
+            'word_count' => (int)($snapshot['word_count'] ?? 0),
+            'content_excerpt' => mb_substr((string)($snapshot['content_text'] ?? ''), 0, 3500),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed>|null $snapshot
+     * @return array<string,mixed>
+     */
+    private function buildRenderedSnapshotContext(?array $snapshot): array
+    {
+        if ($snapshot === null) {
+            return [];
+        }
+
+        $headings = json_decode((string)($snapshot['headings_json'] ?? '[]'), true);
+        $images = json_decode((string)($snapshot['images_json'] ?? '[]'), true);
+        $issues = json_decode((string)($snapshot['issues_json'] ?? '[]'), true);
+
+        return [
+            'http_status' => (int)($snapshot['http_status'] ?? 0),
+            'html_title' => (string)($snapshot['html_title'] ?? ''),
+            'meta_description' => (string)($snapshot['meta_description'] ?? ''),
+            'canonical_url' => (string)($snapshot['canonical_url'] ?? ''),
+            'robots' => (string)($snapshot['robots'] ?? ''),
+            'word_count' => (int)($snapshot['word_count'] ?? 0),
+            'h1_count' => (int)($snapshot['h1_count'] ?? 0),
+            'image_count' => (int)($snapshot['image_count'] ?? 0),
+            'missing_alt_count' => (int)($snapshot['missing_alt_count'] ?? 0),
+            'internal_link_count' => (int)($snapshot['internal_link_count'] ?? 0),
+            'external_link_count' => (int)($snapshot['external_link_count'] ?? 0),
+            'headings' => is_array($headings) ? array_slice($headings, 0, 24) : [],
+            'images_missing_alt_sample' => $this->filterMissingAltImages(is_array($images) ? $images : []),
+            'issues' => is_array($issues) ? $issues : [],
+            'visible_text_excerpt' => mb_substr((string)($snapshot['visible_text'] ?? ''), 0, 3500),
+        ];
+    }
+
+    /**
+     * @param list<mixed> $images
+     * @return list<mixed>
+     */
+    private function filterMissingAltImages(array $images): array
+    {
+        $missing = [];
+        foreach ($images as $image) {
+            if (is_array($image) && !empty($image['missing_alt'])) {
+                $missing[] = $image;
+            }
+            if (count($missing) >= 12) {
+                break;
+            }
+        }
+
+        return $missing;
+    }
+
+    /**
+     * @param array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int} $aiRecommendation
+     * @param array<string,mixed> $context
+     * @return array<string,mixed>
+     */
+    private function buildRecommendationFromAi(array $aiRecommendation, array $context): array
+    {
+        $pageUrl = (string)($context['page_url'] ?? '');
+        $type = $this->normalizeRecommendationType($aiRecommendation['recommendation_type']);
+        $query = $aiRecommendation['query_text'];
+
+        return [
+            'pid' => 0,
+            'tstamp' => time(),
+            'crdate' => time(),
+            'page_uid' => (int)($context['page_uid'] ?? 0),
+            'page_url' => $pageUrl,
+            'query_text' => $query,
+            'recommendation_type' => 'ai_' . $type,
+            'priority' => $aiRecommendation['priority'],
+            'status' => 'draft',
+            'issue' => $aiRecommendation['issue'],
+            'recommendation' => $aiRecommendation['recommendation'],
+            'proposed_seo_title' => $aiRecommendation['proposed_seo_title'],
+            'proposed_description' => $aiRecommendation['proposed_description'],
+            'evidence_json' => json_encode([
+                'generation_mode' => 'ai',
+                'model' => $this->openAiRecommendationService->getModel(),
+                'page_url' => $pageUrl,
+                'query_text' => $query,
+                'search_console_queries' => $context['search_console_queries'] ?? [],
+                'rendered_issues' => $context['rendered_page']['issues'] ?? [],
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'ai_model' => $this->openAiRecommendationService->getModel(),
+            'dedupe_hash' => hash('sha256', implode('|', [
+                'ai',
+                $type,
+                $pageUrl,
+                $query,
+                mb_substr($aiRecommendation['issue'], 0, 160),
+            ])),
+            'approved_at' => 0,
+            'applied_at' => 0,
+        ];
+    }
+
+    private function normalizeRecommendationType(string $type): string
+    {
+        $type = strtolower(trim($type));
+        $type = preg_replace('/[^a-z0-9_]+/', '_', $type) ?? 'recommendation';
+        $type = trim($type, '_');
+
+        return $type !== '' ? mb_substr($type, 0, 48) : 'recommendation';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $candidates
+     * @param array<string,array<string,mixed>> $snapshots
+     * @param array<string,array<string,mixed>> $renderedSnapshots
+     */
+    private function generateRuleBasedRecommendations(array $candidates, array $snapshots, array $renderedSnapshots): int
+    {
+        $stored = 0;
+        foreach ($candidates as $candidate) {
+            $pageUrl = (string)($candidate['page_url'] ?? '');
+            $query = trim((string)($candidate['query_text'] ?? ''));
+            if ($pageUrl === '' || $query === '') {
+                continue;
+            }
+
+            $normalizedUrl = $this->urlNormalizer->normalize($pageUrl);
+            $recommendation = $this->buildRuleBasedRecommendation(
+                $candidate,
+                $snapshots[$normalizedUrl] ?? null,
+                $renderedSnapshots[$normalizedUrl] ?? null
+            );
+            if ($recommendation !== null) {
+                $stored += $this->storeRecommendation($recommendation);
+            }
+        }
+
+        return $stored;
     }
 
     /**

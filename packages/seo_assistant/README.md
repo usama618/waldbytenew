@@ -15,10 +15,10 @@ Environment variables are still supported and take precedence over backend confi
 - `SEO_ASSISTANT_GOOGLE_CLIENT_SECRET`
 - `SEO_ASSISTANT_GOOGLE_REFRESH_TOKEN`
 - `SEO_ASSISTANT_BASE_URL`: public base URL used for page snapshots, for example `https://waldbyte.de/`
-- `SEO_ASSISTANT_OPENAI_API_KEY`: optional, enables AI text suggestions
+- `SEO_ASSISTANT_OPENAI_API_KEY`: optional, enables AI-first recommendation generation
 - `SEO_ASSISTANT_OPENAI_MODEL`: optional but required for AI mode, for example the model you want to use with the OpenAI Responses API
 
-The backend configuration also contains default limits for rendered URL snapshots, minimum impressions, recommendation candidates, and AI refinements.
+The backend configuration also contains default limits for rendered URL snapshots, minimum impressions, recommendation candidates, and AI page analyses.
 
 ## Commands
 
@@ -32,6 +32,10 @@ vendor/bin/typo3 seo:recommendations:generate
 Use `--dry-run` on sync/snapshot commands to see what would be processed without writing rows.
 
 `seo:pages:snapshot` reads TYPO3 page records, `tt_content` fields, and site-package inline records. `seo:rendered:snapshot` crawls the actual frontend HTML for the collected URLs and stores titles, descriptions, H1-H6 headings, visible text, internal links, images and alt text, robots/canonical data, and JSON-LD structured data.
+
+When OpenAI is configured, `seo:recommendations:generate` uses AI-first generation. The rule-based generator is only used when AI is disabled, not configured, or produces no usable recommendation.
+
+AI generation stores compact run memory in the database and keeps the latest 10 runs. Each new AI run receives those summaries as context so it can avoid repeating the same work.
 
 Recommendations are stored as drafts. Applying a recommendation is intentionally manual:
 

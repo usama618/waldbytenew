@@ -15,6 +15,7 @@ final class SeoAssistantModuleController
     private const PAGE_SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
     private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
+    private const AI_RUN_TABLE = 'tx_seoassistant_ai_run';
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
@@ -28,6 +29,7 @@ final class SeoAssistantModuleController
     private function render(): string
     {
         $recommendations = $this->fetchRecommendations();
+        $aiRuns = $this->fetchAiRuns();
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
         $stats = $this->fetchStats();
@@ -59,6 +61,8 @@ final class SeoAssistantModuleController
             . '<h1>SEO Assistant</h1>'
             . '<p class="muted">Central overview for Search Console, rendered frontend audits, CMS content snapshots and reviewable recommendations.</p>'
             . $this->renderStats($stats)
+            . '<h2>AI Run Memory</h2>'
+            . '<div class="panel">' . $this->renderAiRunsTable($aiRuns) . '</div>'
             . '<h2>Recommendations</h2>'
             . '<div class="panel">' . $this->renderRecommendationsTable($recommendations) . '</div>'
             . '<h2>Rendered URL Audit</h2>'
@@ -66,6 +70,21 @@ final class SeoAssistantModuleController
             . '<h2>CMS Content Snapshots</h2>'
             . '<div class="panel">' . $this->renderPageSnapshotsTable($pageSnapshots) . '</div>'
             . '</body></html>';
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function fetchAiRuns(): array
+    {
+        return $this->connectionPool->getConnectionForTable(self::AI_RUN_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::AI_RUN_TABLE)
+            ->orderBy('crdate', 'DESC')
+            ->setMaxResults(10)
+            ->executeQuery()
+            ->fetchAllAssociative();
     }
 
     /**
@@ -118,7 +137,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,pages:int,rendered:int,recommendations:int}
+     * @return array{gsc:int,pages:int,rendered:int,recommendations:int,aiRuns:int}
      */
     private function fetchStats(): array
     {
@@ -127,6 +146,7 @@ final class SeoAssistantModuleController
             'pages' => $this->countRows(self::PAGE_SNAPSHOT_TABLE),
             'rendered' => $this->countRows(self::RENDERED_SNAPSHOT_TABLE),
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
+            'aiRuns' => $this->countRows(self::AI_RUN_TABLE),
         ];
     }
 
@@ -141,7 +161,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,pages:int,rendered:int,recommendations:int} $stats
+     * @param array{gsc:int,pages:int,rendered:int,recommendations:int,aiRuns:int} $stats
      */
     private function renderStats(array $stats): string
     {
@@ -150,7 +170,21 @@ final class SeoAssistantModuleController
             . '<div class="stat"><span class="muted">CMS pages</span><strong>' . $stats['pages'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Rendered URLs</span><strong>' . $stats['rendered'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">AI memory runs</span><strong>' . $stats['aiRuns'] . '</strong></div>'
             . '</div>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $runs
+     */
+    private function renderAiRunsTable(array $runs): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Model</th><th>Mode</th><th>Pages</th><th>Generated</th><th>Stored</th><th>Focus</th>'
+            . '</tr></thead><tbody>'
+            . ($runs === [] ? '<tr><td colspan="7" class="muted">No AI runs recorded yet.</td></tr>' : '')
+            . implode('', array_map($this->renderAiRunRow(...), $runs))
+            . '</tbody></table>';
     }
 
     /**
@@ -164,6 +198,22 @@ final class SeoAssistantModuleController
             . ($recommendations === [] ? '<tr><td colspan="9" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
             . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
             . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderAiRunRow(array $row): string
+    {
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td>' . $this->escape((string)($row['model'] ?? '')) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['mode'] ?? '')) . '</span></td>'
+            . '<td>' . (int)($row['pages_analyzed'] ?? 0) . '</td>'
+            . '<td>' . (int)($row['recommendations_generated'] ?? 0) . '</td>'
+            . '<td>' . (int)($row['recommendations_stored'] ?? 0) . '</td>'
+            . '<td>' . $this->escape((string)($row['focus_summary'] ?? '')) . '</td>'
+            . '</tr>';
     }
 
     /**

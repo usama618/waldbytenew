@@ -110,3 +110,21 @@ CREATE TABLE tx_seoassistant_recommendation (
     KEY query_text (query_text(191)),
     KEY status_priority (status,priority)
 );
+
+CREATE TABLE tx_seoassistant_ai_run (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    model varchar(128) DEFAULT '' NOT NULL,
+    mode varchar(32) DEFAULT 'ai' NOT NULL,
+    pages_analyzed int(11) unsigned DEFAULT '0' NOT NULL,
+    recommendations_generated int(11) unsigned DEFAULT '0' NOT NULL,
+    recommendations_stored int(11) unsigned DEFAULT '0' NOT NULL,
+    focus_summary text,
+    context_json mediumtext,
+
+    PRIMARY KEY (uid),
+    KEY crdate (crdate),
+    KEY mode (mode)
+);

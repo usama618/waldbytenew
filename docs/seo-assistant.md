@@ -29,7 +29,9 @@ SEO_ASSISTANT_OPENAI_API_KEY='...'
 SEO_ASSISTANT_OPENAI_MODEL='...'
 ```
 
-AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` or `SEO_ASSISTANT_OPENAI_MODEL` is missing, the generator falls back to rule-based recommendations.
+AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` and `SEO_ASSISTANT_OPENAI_MODEL` are configured, recommendation generation is AI-first. The rule-based generator is only used when AI is disabled, not configured, or returns no usable recommendation.
+
+AI runs keep compact memory in the database. The extension stores the latest 10 AI generation runs and sends those summaries into the next AI run as context.
 
 ## First run
 
@@ -50,7 +52,7 @@ vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate
 ```
 
-Open the TYPO3 backend module `Web > SEO Assistant` to review drafts, rendered URL issues, and CMS content snapshots centrally.
+Open the TYPO3 backend module `Web > SEO Assistant` to review AI run memory, drafts, rendered URL issues, and CMS content snapshots centrally.
 
 ## Safe apply flow
 

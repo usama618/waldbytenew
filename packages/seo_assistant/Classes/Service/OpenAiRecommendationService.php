@@ -30,8 +30,18 @@ final class OpenAiRecommendationService
      */
     public function createRecommendation(array $context): ?array
     {
+        $recommendations = $this->createRecommendations($context, 1);
+        return $recommendations[0] ?? null;
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     * @return list<array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
+     */
+    public function createRecommendations(array $context, int $maxRecommendations = 3): array
+    {
         if (!$this->isConfigured()) {
-            return null;
+            return [];
         }
 
         try {
@@ -47,10 +57,14 @@ final class OpenAiRecommendationService
                     'json' => [
                         'model' => $this->configuration->getOpenAiModel(),
                         'instructions' => implode(' ', [
-                            'Du bist ein technischer SEO-Redakteur fuer eine deutsche Webagentur.',
-                            'Erstelle nur konkrete, faktenbasierte Empfehlungen.',
+                            'Du bist ein AI SEO Strategist fuer eine deutsche TYPO3 Webagentur.',
+                            'Analysiere Google Search Console Daten, CMS-Inhalte und gerendertes HTML.',
+                            'Entscheide selbst, welche SEO-Empfehlungen wichtig sind.',
+                            'Erstelle nur konkrete, faktenbasierte Empfehlungen mit klarer Prioritaet.',
+                            'Wenn keine sinnvolle Empfehlung vorhanden ist, gib eine leere recommendations-Liste zurueck.',
                             'Keine erfundenen Leistungsversprechen, keine Rankings garantieren.',
                             'Meta Titles maximal 60 Zeichen, Meta Descriptions maximal 155 Zeichen.',
+                            'Schreibe auf Deutsch, passend fuer WALDBYTE und die Region Karlsruhe, wenn lokal relevant.',
                         ]),
                         'input' => [
                             [
@@ -66,42 +80,65 @@ final class OpenAiRecommendationService
                         'text' => [
                             'format' => [
                                 'type' => 'json_schema',
-                                'name' => 'seo_recommendation',
+                                'name' => 'seo_recommendations',
                                 'strict' => true,
                                 'schema' => [
                                     'type' => 'object',
                                     'additionalProperties' => false,
-                                    'required' => [
-                                        'issue',
-                                        'recommendation',
-                                        'proposed_seo_title',
-                                        'proposed_description',
-                                        'priority',
-                                    ],
+                                    'required' => ['recommendations'],
                                     'properties' => [
-                                        'issue' => [
-                                            'type' => 'string',
-                                        ],
-                                        'recommendation' => [
-                                            'type' => 'string',
-                                        ],
-                                        'proposed_seo_title' => [
-                                            'type' => 'string',
-                                        ],
-                                        'proposed_description' => [
-                                            'type' => 'string',
-                                        ],
-                                        'priority' => [
-                                            'type' => 'integer',
-                                            'minimum' => 1,
-                                            'maximum' => 100,
+                                        'recommendations' => [
+                                            'type' => 'array',
+                                            'maxItems' => max(1, min(5, $maxRecommendations)),
+                                            'items' => [
+                                                'type' => 'object',
+                                                'additionalProperties' => false,
+                                                'required' => [
+                                                    'recommendation_type',
+                                                    'query_text',
+                                                    'issue',
+                                                    'recommendation',
+                                                    'proposed_seo_title',
+                                                    'proposed_description',
+                                                    'priority',
+                                                ],
+                                                'properties' => [
+                                                    'recommendation_type' => [
+                                                        'type' => 'string',
+                                                        'description' => 'Short machine key like meta_title, meta_description, content_gap, internal_links, image_alt, structured_data, technical_indexing.',
+                                                    ],
+                                                    'query_text' => [
+                                                        'type' => 'string',
+                                                        'description' => 'Main Search Console query this recommendation targets. Empty string for technical recommendations.',
+                                                    ],
+                                                    'issue' => [
+                                                        'type' => 'string',
+                                                    ],
+                                                    'recommendation' => [
+                                                        'type' => 'string',
+                                                    ],
+                                                    'proposed_seo_title' => [
+                                                        'type' => 'string',
+                                                        'description' => 'Only fill when a page SEO title should change. Otherwise empty string.',
+                                                    ],
+                                                    'proposed_description' => [
+                                                        'type' => 'string',
+                                                        'description' => 'Only fill when the page meta description should change. Otherwise empty string.',
+                                                    ],
+                                                    'priority' => [
+                                                        'type' => 'integer',
+                                                        'minimum' => 1,
+                                                        'maximum' => 100,
+                                                    ],
+                                                ],
+                                            ],
                                         ],
                                     ],
                                 ],
                             ],
                             'verbosity' => 'low',
                         ],
-                        'max_output_tokens' => 700,
+                        'max_output_tokens' => 1800,
                     ],
                     'timeout' => 45,
                 ]
@@ -117,21 +154,55 @@ final class OpenAiRecommendationService
                 return null;
             }
 
-            $recommendation = json_decode($outputText, true);
-            if (!is_array($recommendation)) {
-                return null;
+            $payload = json_decode($outputText, true);
+            if (!is_array($payload)) {
+                return [];
             }
 
-            return [
-                'issue' => (string)($recommendation['issue'] ?? ''),
-                'recommendation' => (string)($recommendation['recommendation'] ?? ''),
-                'proposed_seo_title' => (string)($recommendation['proposed_seo_title'] ?? ''),
-                'proposed_description' => (string)($recommendation['proposed_description'] ?? ''),
-                'priority' => max(1, min(100, (int)($recommendation['priority'] ?? 50))),
-            ];
+            return $this->normalizeRecommendations($payload['recommendations'] ?? [], $maxRecommendations);
         } catch (Throwable) {
-            return null;
+            return [];
         }
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
+     */
+    private function normalizeRecommendations($items, int $maxRecommendations): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $recommendations = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $issue = trim((string)($item['issue'] ?? ''));
+            $recommendation = trim((string)($item['recommendation'] ?? ''));
+            if ($issue === '' || $recommendation === '') {
+                continue;
+            }
+
+            $recommendations[] = [
+                'recommendation_type' => trim((string)($item['recommendation_type'] ?? 'ai_recommendation')) ?: 'ai_recommendation',
+                'query_text' => trim((string)($item['query_text'] ?? '')),
+                'issue' => $issue,
+                'recommendation' => $recommendation,
+                'proposed_seo_title' => mb_substr(trim((string)($item['proposed_seo_title'] ?? '')), 0, 60),
+                'proposed_description' => mb_substr(trim((string)($item['proposed_description'] ?? '')), 0, 155),
+                'priority' => max(1, min(100, (int)($item['priority'] ?? 50))),
+            ];
+
+            if (count($recommendations) >= max(1, $maxRecommendations)) {
+                break;
+            }
+        }
+
+        return $recommendations;
     }
 
     /**

@@ -29,7 +29,7 @@ final class RecommendationsGenerateCommand extends Command
         $this
             ->addOption('min-impressions', null, InputOption::VALUE_REQUIRED, 'Minimum impressions for a query/page candidate.', (string)$this->configuration->getMinImpressions())
             ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum GSC candidates to evaluate.', (string)$this->configuration->getRecommendationLimit())
-            ->addOption('ai-limit', null, InputOption::VALUE_REQUIRED, 'Maximum recommendations to refine with AI when configured.', (string)$this->configuration->getAiLimit())
+            ->addOption('ai-limit', null, InputOption::VALUE_REQUIRED, 'Maximum page contexts to analyze with AI when configured.', (string)$this->configuration->getAiLimit())
             ->addOption('disable-ai', null, InputOption::VALUE_NONE, 'Use only rule-based recommendations.');
     }
 
@@ -50,7 +50,9 @@ final class RecommendationsGenerateCommand extends Command
         }
 
         $io->success(sprintf(
-            'Recommendation generation complete: evaluated %d GSC candidates and %d rendered URLs, stored %d drafts, AI refinements used %d. AI configured: %s.',
+            'Recommendation generation complete: mode %s%s, evaluated %d GSC candidates and %d rendered URLs, stored %d drafts, AI analyses used %d. AI configured: %s.',
+            $result['generationMode'],
+            $result['fallbackUsed'] ? ' (fallback)' : '',
             $result['evaluated'],
             $result['renderedEvaluated'],
             $result['stored'],
