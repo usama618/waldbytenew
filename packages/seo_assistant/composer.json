@@ -1,0 +1,22 @@
+{
+    "name": "app/seo-assistant",
+    "type": "typo3-cms-extension",
+    "description": "SEO assistant for Google Search Console imports and reviewable AI recommendations.",
+    "license": ["GPL-2.0-or-later"],
+    "keywords": ["TYPO3 CMS", "SEO", "Google Search Console"],
+    "require": {
+        "php": "^8.2",
+        "typo3/cms-backend": "^13.4",
+        "typo3/cms-core": "^13.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\SeoAssistant\\": "Classes/"
+        }
+    },
+    "extra": {
+        "typo3/cms": {
+            "extension-key": "seo_assistant"
+        }
+    }
+}

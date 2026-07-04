@@ -4,8 +4,46 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "2c444942f81737f7cadeba1f0a485907",
+    "content-hash": "3691791e1478d4b142ceac4a400ee8c6",
     "packages": [
+        {
+            "name": "app/seo-assistant",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "./packages/seo_assistant",
+                "reference": "4ff1518140272cee9d757004e2c582f93bfa5c21"
+            },
+            "require": {
+                "php": "^8.2",
+                "typo3/cms-backend": "^13.4",
+                "typo3/cms-core": "^13.4"
+            },
+            "type": "typo3-cms-extension",
+            "extra": {
+                "typo3/cms": {
+                    "extension-key": "seo_assistant"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "App\\SeoAssistant\\": "Classes/"
+                }
+            },
+            "license": [
+                "GPL-2.0-or-later"
+            ],
+            "description": "SEO assistant for Google Search Console imports and reviewable AI recommendations.",
+            "keywords": [
+                "Google Search Console",
+                "SEO",
+                "TYPO3 CMS"
+            ],
+            "transport-options": {
+                "symlink": true,
+                "relative": true
+            }
+        },
         {
             "name": "app/site-package",
             "version": "dev-main",
@@ -7380,6 +7418,7 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
+        "app/seo-assistant": 20,
         "app/site-package": 20
     },
     "prefer-stable": false,

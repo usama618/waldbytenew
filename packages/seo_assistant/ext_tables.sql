@@ -1,0 +1,78 @@
+CREATE TABLE tx_seoassistant_gsc_row (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    site_url varchar(512) DEFAULT '' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    query_text varchar(1024) DEFAULT '' NOT NULL,
+    country varchar(16) DEFAULT '' NOT NULL,
+    device varchar(32) DEFAULT '' NOT NULL,
+    search_type varchar(32) DEFAULT 'web' NOT NULL,
+    date_from int(11) unsigned DEFAULT '0' NOT NULL,
+    date_to int(11) unsigned DEFAULT '0' NOT NULL,
+    clicks double DEFAULT '0' NOT NULL,
+    impressions double DEFAULT '0' NOT NULL,
+    ctr double DEFAULT '0' NOT NULL,
+    position double DEFAULT '0' NOT NULL,
+    row_hash varchar(64) DEFAULT '' NOT NULL,
+    raw_json mediumtext,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY row_hash (row_hash),
+    KEY page_url (page_url(191)),
+    KEY query_text (query_text(191)),
+    KEY date_range (date_from,date_to)
+);
+
+CREATE TABLE tx_seoassistant_page_snapshot (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    page_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    title varchar(512) DEFAULT '' NOT NULL,
+    seo_title varchar(512) DEFAULT '' NOT NULL,
+    description text,
+    slug varchar(2048) DEFAULT '' NOT NULL,
+    h1 varchar(512) DEFAULT '' NOT NULL,
+    content_text mediumtext,
+    word_count int(11) unsigned DEFAULT '0' NOT NULL,
+    robots varchar(128) DEFAULT '' NOT NULL,
+    canonical_url varchar(2048) DEFAULT '' NOT NULL,
+    raw_json mediumtext,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY page_uid (page_uid),
+    KEY page_url (page_url(191))
+);
+
+CREATE TABLE tx_seoassistant_recommendation (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    page_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    query_text varchar(1024) DEFAULT '' NOT NULL,
+    recommendation_type varchar(64) DEFAULT '' NOT NULL,
+    priority int(11) unsigned DEFAULT '0' NOT NULL,
+    status varchar(32) DEFAULT 'draft' NOT NULL,
+    issue text,
+    recommendation mediumtext,
+    proposed_seo_title varchar(512) DEFAULT '' NOT NULL,
+    proposed_description text,
+    evidence_json mediumtext,
+    ai_model varchar(128) DEFAULT '' NOT NULL,
+    dedupe_hash varchar(64) DEFAULT '' NOT NULL,
+    approved_at int(11) unsigned DEFAULT '0' NOT NULL,
+    applied_at int(11) unsigned DEFAULT '0' NOT NULL,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY dedupe_hash (dedupe_hash),
+    KEY page_uid (page_uid),
+    KEY page_url (page_url(191)),
+    KEY query_text (query_text(191)),
+    KEY status_priority (status,priority)
+);
