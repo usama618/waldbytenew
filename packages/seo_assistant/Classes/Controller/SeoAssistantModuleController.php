@@ -171,9 +171,11 @@ final class SeoAssistantModuleController
             ->createQueryBuilder()
             ->select('*')
             ->from(self::RECOMMENDATION_TABLE)
+            ->where('status <> :appliedStatus')
             ->orderBy('priority', 'DESC')
             ->addOrderBy('tstamp', 'DESC')
             ->setMaxResults(500)
+            ->setParameter('appliedStatus', 'applied')
             ->executeQuery()
             ->fetchAllAssociative();
 
