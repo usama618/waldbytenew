@@ -54,12 +54,15 @@ final class RecommendationsApplyCommand extends Command
         $io->definitionList(
             ['Recommendation UID' => $result['uid']],
             ['Page UID' => $result['pageUid']],
+            ['Action' => $result['actionType']],
+            ['Apply capability' => $result['applyCapability']],
+            ['Changed fields' => implode(', ', $result['changedFields'])],
             ['SEO title' => $result['seoTitle']],
             ['Description' => $result['description']],
         );
 
         if ($result['dryRun']) {
-            $io->note('Run again with --yes to write pages.seo_title and pages.description.');
+            $io->note('Run again with --yes to write the safe metadata update and mark verification as pending.');
         }
 
         return Command::SUCCESS;

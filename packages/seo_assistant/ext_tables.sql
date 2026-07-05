@@ -25,6 +25,45 @@ CREATE TABLE tx_seoassistant_gsc_row (
     KEY date_range (date_from,date_to)
 );
 
+CREATE TABLE tx_seoassistant_gsc_insight (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    page_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    query_text varchar(1024) DEFAULT '' NOT NULL,
+    current_from int(11) unsigned DEFAULT '0' NOT NULL,
+    current_to int(11) unsigned DEFAULT '0' NOT NULL,
+    previous_from int(11) unsigned DEFAULT '0' NOT NULL,
+    previous_to int(11) unsigned DEFAULT '0' NOT NULL,
+    current_clicks double DEFAULT '0' NOT NULL,
+    current_impressions double DEFAULT '0' NOT NULL,
+    current_ctr double DEFAULT '0' NOT NULL,
+    current_position double DEFAULT '0' NOT NULL,
+    previous_clicks double DEFAULT '0' NOT NULL,
+    previous_impressions double DEFAULT '0' NOT NULL,
+    previous_ctr double DEFAULT '0' NOT NULL,
+    previous_position double DEFAULT '0' NOT NULL,
+    clicks_delta double DEFAULT '0' NOT NULL,
+    impressions_delta double DEFAULT '0' NOT NULL,
+    ctr_delta double DEFAULT '0' NOT NULL,
+    position_delta double DEFAULT '0' NOT NULL,
+    trend_type varchar(64) DEFAULT '' NOT NULL,
+    priority int(11) unsigned DEFAULT '0' NOT NULL,
+    summary text,
+    evidence_json mediumtext,
+    insight_hash varchar(64) DEFAULT '' NOT NULL,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY insight_hash (insight_hash),
+    KEY page_uid (page_uid),
+    KEY page_url (page_url(191)),
+    KEY query_text (query_text(191)),
+    KEY current_range (current_from,current_to),
+    KEY trend_priority (trend_type,priority)
+);
+
 CREATE TABLE tx_seoassistant_page_snapshot (
     uid int(11) unsigned NOT NULL auto_increment,
     pid int(11) DEFAULT '0' NOT NULL,
@@ -95,20 +134,29 @@ CREATE TABLE tx_seoassistant_recommendation (
     status varchar(32) DEFAULT 'draft' NOT NULL,
     issue text,
     recommendation mediumtext,
+    action_type varchar(64) DEFAULT '' NOT NULL,
+    action_payload_json mediumtext,
+    apply_capability varchar(32) DEFAULT 'manual' NOT NULL,
     proposed_seo_title varchar(512) DEFAULT '' NOT NULL,
     proposed_description text,
     evidence_json mediumtext,
     ai_model varchar(128) DEFAULT '' NOT NULL,
     dedupe_hash varchar(64) DEFAULT '' NOT NULL,
+    applied_changes_json mediumtext,
+    verification_status varchar(32) DEFAULT 'not_checked' NOT NULL,
+    verification_json mediumtext,
     approved_at int(11) unsigned DEFAULT '0' NOT NULL,
     applied_at int(11) unsigned DEFAULT '0' NOT NULL,
+    verified_at int(11) unsigned DEFAULT '0' NOT NULL,
 
     PRIMARY KEY (uid),
     UNIQUE KEY dedupe_hash (dedupe_hash),
     KEY page_uid (page_uid),
     KEY page_url (page_url(191)),
     KEY query_text (query_text(191)),
-    KEY status_priority (status,priority)
+    KEY status_priority (status,priority),
+    KEY apply_capability (apply_capability),
+    KEY verification_status (verification_status)
 );
 
 CREATE TABLE tx_seoassistant_ai_run (

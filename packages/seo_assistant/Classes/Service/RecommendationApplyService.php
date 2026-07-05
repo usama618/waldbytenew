@@ -17,7 +17,7 @@ final class RecommendationApplyService
     ) {}
 
     /**
-     * @return array{uid:int,pageUid:int,seoTitle:string,description:string,dryRun:bool}
+     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool}
      */
     public function apply(int $recommendationUid, bool $dryRun = true, bool $force = false): array
     {
@@ -35,10 +35,29 @@ final class RecommendationApplyService
             throw new RuntimeException('Recommendation status "' . $status . '" cannot be applied without --force.', 1760000042);
         }
 
-        $seoTitle = trim((string)($recommendation['proposed_seo_title'] ?? ''));
-        $description = trim((string)($recommendation['proposed_description'] ?? ''));
+        $metadataAction = $this->extractMetadataAction($recommendation);
+        $actionType = $metadataAction['actionType'];
+        $applyCapability = $metadataAction['applyCapability'];
+        $seoTitle = $metadataAction['seoTitle'];
+        $description = $metadataAction['description'];
+
+        if ($actionType !== 'metadata_update') {
+            throw new RuntimeException('Recommendation action "' . $actionType . '" is manual and cannot be applied automatically.', 1760000045);
+        }
+        if (!$force && $applyCapability !== 'safe_metadata') {
+            throw new RuntimeException('Recommendation apply capability "' . $applyCapability . '" is not safe for automatic apply.', 1760000046);
+        }
         if ($seoTitle === '' && $description === '') {
             throw new RuntimeException('Recommendation has no proposed SEO title or description.', 1760000043);
+        }
+
+        $currentMetadata = $this->fetchPageMetadata($pageUid);
+        $changedFields = [];
+        if ($seoTitle !== '') {
+            $changedFields[] = 'seo_title';
+        }
+        if ($description !== '') {
+            $changedFields[] = 'description';
         }
 
         if (!$dryRun) {
@@ -58,19 +77,42 @@ final class RecommendationApplyService
             $this->connectionPool->getConnectionForTable('pages')
                 ->update('pages', $pageData, ['uid' => $pageUid], $types);
 
+            $appliedChanges = [
+                'action_type' => $actionType,
+                'apply_capability' => $applyCapability,
+                'page_uid' => $pageUid,
+                'fields' => [
+                    'seo_title' => [
+                        'before' => (string)($currentMetadata['seo_title'] ?? ''),
+                        'after' => $seoTitle,
+                        'changed' => $seoTitle !== '' && $seoTitle !== (string)($currentMetadata['seo_title'] ?? ''),
+                    ],
+                    'description' => [
+                        'before' => (string)($currentMetadata['description'] ?? ''),
+                        'after' => $description,
+                        'changed' => $description !== '' && $description !== (string)($currentMetadata['description'] ?? ''),
+                    ],
+                ],
+            ];
+
             $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
                 ->update(
                     self::RECOMMENDATION_TABLE,
                     [
                         'page_uid' => $pageUid,
                         'status' => 'applied',
+                        'applied_changes_json' => json_encode($appliedChanges, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                        'verification_status' => 'pending',
+                        'verification_json' => '',
                         'applied_at' => time(),
+                        'verified_at' => 0,
                         'tstamp' => time(),
                     ],
                     ['uid' => $recommendationUid],
                     [
                         'page_uid' => Connection::PARAM_INT,
                         'applied_at' => Connection::PARAM_INT,
+                        'verified_at' => Connection::PARAM_INT,
                         'tstamp' => Connection::PARAM_INT,
                     ]
                 );
@@ -79,9 +121,89 @@ final class RecommendationApplyService
         return [
             'uid' => $recommendationUid,
             'pageUid' => $pageUid,
+            'actionType' => $actionType,
+            'applyCapability' => $applyCapability,
             'seoTitle' => $seoTitle,
             'description' => $description,
+            'changedFields' => $changedFields,
             'dryRun' => $dryRun,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @return array{actionType:string,applyCapability:string,seoTitle:string,description:string}
+     */
+    private function extractMetadataAction(array $recommendation): array
+    {
+        $payload = json_decode((string)($recommendation['action_payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $seoTitle = trim((string)($payload['seo_title'] ?? $recommendation['proposed_seo_title'] ?? ''));
+        $description = trim((string)($payload['description'] ?? $recommendation['proposed_description'] ?? ''));
+        $storedActionType = trim((string)($recommendation['action_type'] ?? ''));
+        $actionType = $storedActionType;
+        if ($actionType === '' && ($seoTitle !== '' || $description !== '')) {
+            $actionType = 'metadata_update';
+        }
+
+        $targetTable = trim((string)($payload['target_table'] ?? 'pages'));
+        if ($actionType === 'metadata_update' && $targetTable !== '' && $targetTable !== 'pages') {
+            throw new RuntimeException('Metadata updates can only target the TYPO3 pages table.', 1760000047);
+        }
+
+        $applyCapability = trim((string)($recommendation['apply_capability'] ?? ''));
+        if (
+            ($applyCapability === '' || ($storedActionType === '' && $applyCapability === 'manual'))
+            && $actionType === 'metadata_update'
+            && ($seoTitle !== '' || $description !== '')
+        ) {
+            $applyCapability = 'safe_metadata';
+        }
+
+        return [
+            'actionType' => $actionType !== '' ? $actionType : 'manual_review',
+            'applyCapability' => $applyCapability !== '' ? $applyCapability : 'manual',
+            'seoTitle' => mb_substr($seoTitle, 0, 60),
+            'description' => mb_substr($description, 0, 155),
+        ];
+    }
+
+    /**
+     * @return array{seo_title:string,description:string}
+     */
+    private function fetchPageMetadata(int $pageUid): array
+    {
+        $connection = $this->connectionPool->getConnectionForTable('pages');
+        $columns = $connection->getSchemaInformation()->listTableColumnNames('pages');
+        $select = array_values(array_intersect(['seo_title', 'description'], $columns));
+        if ($select === []) {
+            return [
+                'seo_title' => '',
+                'description' => '',
+            ];
+        }
+
+        $row = $connection->createQueryBuilder()
+            ->select(...$select)
+            ->from('pages')
+            ->where('uid = :uid')
+            ->setParameter('uid', $pageUid, Connection::PARAM_INT)
+            ->executeQuery()
+            ->fetchAssociative();
+
+        if (!is_array($row)) {
+            return [
+                'seo_title' => '',
+                'description' => '',
+            ];
+        }
+
+        return [
+            'seo_title' => (string)($row['seo_title'] ?? ''),
+            'description' => (string)($row['description'] ?? ''),
         ];
     }
 

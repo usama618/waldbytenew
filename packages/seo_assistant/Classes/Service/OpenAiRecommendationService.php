@@ -26,7 +26,7 @@ final class OpenAiRecommendationService
 
     /**
      * @param array<string,mixed> $context
-     * @return array{issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}|null
+     * @return array{recommendation_type:string,action_type:string,action_payload:array<string,mixed>,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}|null
      */
     public function createRecommendation(array $context): ?array
     {
@@ -36,7 +36,7 @@ final class OpenAiRecommendationService
 
     /**
      * @param array<string,mixed> $context
-     * @return list<array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
+     * @return list<array{recommendation_type:string,action_type:string,action_payload:array<string,mixed>,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
      */
     public function createRecommendations(array $context, int $maxRecommendations = 3): array
     {
@@ -64,6 +64,8 @@ final class OpenAiRecommendationService
                             'Wenn keine sinnvolle Empfehlung vorhanden ist, gib eine leere recommendations-Liste zurueck.',
                             'Keine erfundenen Leistungsversprechen, keine Rankings garantieren.',
                             'Meta Titles maximal 60 Zeichen, Meta Descriptions maximal 155 Zeichen.',
+                            'Nutze action_type metadata_update nur, wenn pages.seo_title oder pages.description sicher aktualisiert werden koennen.',
+                            'Nutze fuer Inhalte, Links, Bilder, Schema und technische Themen eine manuelle action_type mit konkretem Payload.',
                             'Schreibe auf Deutsch, passend fuer WALDBYTE und die Region Karlsruhe, wenn lokal relevant.',
                         ]),
                         'input' => [
@@ -95,6 +97,8 @@ final class OpenAiRecommendationService
                                                 'additionalProperties' => false,
                                                 'required' => [
                                                     'recommendation_type',
+                                                    'action_type',
+                                                    'action_payload',
                                                     'query_text',
                                                     'issue',
                                                     'recommendation',
@@ -106,6 +110,105 @@ final class OpenAiRecommendationService
                                                     'recommendation_type' => [
                                                         'type' => 'string',
                                                         'description' => 'Short machine key like meta_title, meta_description, content_gap, internal_links, image_alt, structured_data, technical_indexing.',
+                                                    ],
+                                                    'action_type' => [
+                                                        'type' => 'string',
+                                                        'enum' => [
+                                                            'metadata_update',
+                                                            'content_gap_brief',
+                                                            'internal_link_suggestion',
+                                                            'image_alt_suggestion',
+                                                            'structured_data_suggestion',
+                                                            'technical_indexing_issue',
+                                                            'manual_review',
+                                                        ],
+                                                        'description' => 'Machine-applicable action category. Only metadata_update may be applied automatically.',
+                                                    ],
+                                                    'action_payload' => [
+                                                        'type' => 'object',
+                                                        'additionalProperties' => false,
+                                                        'required' => [
+                                                            'target_table',
+                                                            'target_uid',
+                                                            'seo_title',
+                                                            'description',
+                                                            'content_brief',
+                                                            'suggested_headings',
+                                                            'suggested_links',
+                                                            'image_alt_suggestions',
+                                                            'structured_data_type',
+                                                            'structured_data_preview',
+                                                            'technical_steps',
+                                                        ],
+                                                        'properties' => [
+                                                            'target_table' => [
+                                                                'type' => 'string',
+                                                                'description' => 'TYPO3 table to change when applicable. Use pages for metadata updates, otherwise empty string.',
+                                                            ],
+                                                            'target_uid' => [
+                                                                'type' => 'integer',
+                                                                'minimum' => 0,
+                                                            ],
+                                                            'seo_title' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Only for metadata_update. Empty string otherwise.',
+                                                            ],
+                                                            'description' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Only for metadata_update. Empty string otherwise.',
+                                                            ],
+                                                            'content_brief' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Concrete content gap or editor brief. Empty string if not relevant.',
+                                                            ],
+                                                            'suggested_headings' => [
+                                                                'type' => 'array',
+                                                                'items' => ['type' => 'string'],
+                                                                'maxItems' => 8,
+                                                            ],
+                                                            'suggested_links' => [
+                                                                'type' => 'array',
+                                                                'items' => [
+                                                                    'type' => 'object',
+                                                                    'additionalProperties' => false,
+                                                                    'required' => ['source_url', 'target_url', 'anchor_text', 'reason'],
+                                                                    'properties' => [
+                                                                        'source_url' => ['type' => 'string'],
+                                                                        'target_url' => ['type' => 'string'],
+                                                                        'anchor_text' => ['type' => 'string'],
+                                                                        'reason' => ['type' => 'string'],
+                                                                    ],
+                                                                ],
+                                                                'maxItems' => 8,
+                                                            ],
+                                                            'image_alt_suggestions' => [
+                                                                'type' => 'array',
+                                                                'items' => [
+                                                                    'type' => 'object',
+                                                                    'additionalProperties' => false,
+                                                                    'required' => ['src', 'alt_text', 'reason'],
+                                                                    'properties' => [
+                                                                        'src' => ['type' => 'string'],
+                                                                        'alt_text' => ['type' => 'string'],
+                                                                        'reason' => ['type' => 'string'],
+                                                                    ],
+                                                                ],
+                                                                'maxItems' => 12,
+                                                            ],
+                                                            'structured_data_type' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Schema.org type suggestion like Service, FAQPage, BlogPosting, BreadcrumbList, or empty string.',
+                                                            ],
+                                                            'structured_data_preview' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Compact JSON-LD preview or implementation note. Empty string if not relevant.',
+                                                            ],
+                                                            'technical_steps' => [
+                                                                'type' => 'array',
+                                                                'items' => ['type' => 'string'],
+                                                                'maxItems' => 8,
+                                                            ],
+                                                        ],
                                                     ],
                                                     'query_text' => [
                                                         'type' => 'string',
@@ -138,7 +241,7 @@ final class OpenAiRecommendationService
                             ],
                             'verbosity' => 'low',
                         ],
-                        'max_output_tokens' => 1800,
+                        'max_output_tokens' => 2600,
                     ],
                     'timeout' => 45,
                 ]
@@ -146,12 +249,12 @@ final class OpenAiRecommendationService
 
             $payload = json_decode((string)$response->getBody(), true);
             if (!is_array($payload)) {
-                return null;
+                return [];
             }
 
             $outputText = $this->extractOutputText($payload);
             if ($outputText === '') {
-                return null;
+                return [];
             }
 
             $payload = json_decode($outputText, true);
@@ -167,7 +270,7 @@ final class OpenAiRecommendationService
 
     /**
      * @param mixed $items
-     * @return list<array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
+     * @return list<array{recommendation_type:string,action_type:string,action_payload:array<string,mixed>,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
      */
     private function normalizeRecommendations($items, int $maxRecommendations): array
     {
@@ -187,13 +290,20 @@ final class OpenAiRecommendationService
                 continue;
             }
 
+            $proposedTitle = mb_substr(trim((string)($item['proposed_seo_title'] ?? '')), 0, 60);
+            $proposedDescription = mb_substr(trim((string)($item['proposed_description'] ?? '')), 0, 155);
+            $actionPayload = $this->normalizeActionPayload($item['action_payload'] ?? [], $proposedTitle, $proposedDescription);
+            $actionType = $this->normalizeActionType((string)($item['action_type'] ?? ''), $actionPayload, $proposedTitle, $proposedDescription);
+
             $recommendations[] = [
                 'recommendation_type' => trim((string)($item['recommendation_type'] ?? 'ai_recommendation')) ?: 'ai_recommendation',
+                'action_type' => $actionType,
+                'action_payload' => $actionPayload,
                 'query_text' => trim((string)($item['query_text'] ?? '')),
                 'issue' => $issue,
                 'recommendation' => $recommendation,
-                'proposed_seo_title' => mb_substr(trim((string)($item['proposed_seo_title'] ?? '')), 0, 60),
-                'proposed_description' => mb_substr(trim((string)($item['proposed_description'] ?? '')), 0, 155),
+                'proposed_seo_title' => $proposedTitle,
+                'proposed_description' => $proposedDescription,
                 'priority' => max(1, min(100, (int)($item['priority'] ?? 50))),
             ];
 
@@ -203,6 +313,170 @@ final class OpenAiRecommendationService
         }
 
         return $recommendations;
+    }
+
+    /**
+     * @param mixed $payload
+     * @return array<string,mixed>
+     */
+    private function normalizeActionPayload($payload, string $proposedTitle, string $proposedDescription): array
+    {
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $normalized = [
+            'target_table' => trim((string)($payload['target_table'] ?? '')),
+            'target_uid' => max(0, (int)($payload['target_uid'] ?? 0)),
+            'seo_title' => mb_substr(trim((string)($payload['seo_title'] ?? $proposedTitle)), 0, 60),
+            'description' => mb_substr(trim((string)($payload['description'] ?? $proposedDescription)), 0, 155),
+            'content_brief' => mb_substr(trim((string)($payload['content_brief'] ?? '')), 0, 1800),
+            'suggested_headings' => $this->normalizeStringList($payload['suggested_headings'] ?? [], 8, 120),
+            'suggested_links' => $this->normalizeLinkSuggestions($payload['suggested_links'] ?? []),
+            'image_alt_suggestions' => $this->normalizeImageAltSuggestions($payload['image_alt_suggestions'] ?? []),
+            'structured_data_type' => mb_substr(trim((string)($payload['structured_data_type'] ?? '')), 0, 80),
+            'structured_data_preview' => mb_substr(trim((string)($payload['structured_data_preview'] ?? '')), 0, 2200),
+            'technical_steps' => $this->normalizeStringList($payload['technical_steps'] ?? [], 8, 220),
+        ];
+
+        if ($normalized['seo_title'] === '' && $proposedTitle !== '') {
+            $normalized['seo_title'] = $proposedTitle;
+        }
+        if ($normalized['description'] === '' && $proposedDescription !== '') {
+            $normalized['description'] = $proposedDescription;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<string>
+     */
+    private function normalizeStringList($items, int $limit, int $itemLength): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $values = [];
+        foreach ($items as $item) {
+            $value = mb_substr(trim((string)$item), 0, $itemLength);
+            if ($value !== '') {
+                $values[] = $value;
+            }
+            if (count($values) >= $limit) {
+                break;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<array{source_url:string,target_url:string,anchor_text:string,reason:string}>
+     */
+    private function normalizeLinkSuggestions($items): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $values = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $sourceUrl = mb_substr(trim((string)($item['source_url'] ?? '')), 0, 2048);
+            $targetUrl = mb_substr(trim((string)($item['target_url'] ?? '')), 0, 2048);
+            $anchorText = mb_substr(trim((string)($item['anchor_text'] ?? '')), 0, 160);
+            if ($targetUrl === '' && $anchorText === '') {
+                continue;
+            }
+            $values[] = [
+                'source_url' => $sourceUrl,
+                'target_url' => $targetUrl,
+                'anchor_text' => $anchorText,
+                'reason' => mb_substr(trim((string)($item['reason'] ?? '')), 0, 260),
+            ];
+            if (count($values) >= 8) {
+                break;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<array{src:string,alt_text:string,reason:string}>
+     */
+    private function normalizeImageAltSuggestions($items): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $values = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $src = mb_substr(trim((string)($item['src'] ?? '')), 0, 2048);
+            $altText = mb_substr(trim((string)($item['alt_text'] ?? '')), 0, 255);
+            if ($src === '' || $altText === '') {
+                continue;
+            }
+            $values[] = [
+                'src' => $src,
+                'alt_text' => $altText,
+                'reason' => mb_substr(trim((string)($item['reason'] ?? '')), 0, 260),
+            ];
+            if (count($values) >= 12) {
+                break;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function normalizeActionType(string $actionType, array $payload, string $proposedTitle, string $proposedDescription): string
+    {
+        $actionType = strtolower(trim($actionType));
+        $allowed = [
+            'metadata_update',
+            'content_gap_brief',
+            'internal_link_suggestion',
+            'image_alt_suggestion',
+            'structured_data_suggestion',
+            'technical_indexing_issue',
+            'manual_review',
+        ];
+        if (!in_array($actionType, $allowed, true)) {
+            $actionType = '';
+        }
+
+        if ($actionType === '' && ($proposedTitle !== '' || $proposedDescription !== '' || (string)($payload['seo_title'] ?? '') !== '' || (string)($payload['description'] ?? '') !== '')) {
+            return 'metadata_update';
+        }
+        if ($actionType === '' && (string)($payload['content_brief'] ?? '') !== '') {
+            return 'content_gap_brief';
+        }
+        if ($actionType === '' && ($payload['suggested_links'] ?? []) !== []) {
+            return 'internal_link_suggestion';
+        }
+        if ($actionType === '' && ($payload['image_alt_suggestions'] ?? []) !== []) {
+            return 'image_alt_suggestion';
+        }
+        if ($actionType === '' && (string)($payload['structured_data_type'] ?? '') !== '') {
+            return 'structured_data_suggestion';
+        }
+
+        return $actionType !== '' ? $actionType : 'manual_review';
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\SeoAssistant\Controller;
 
+use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Database\ConnectionPool;
@@ -12,6 +13,7 @@ use TYPO3\CMS\Core\Http\HtmlResponse;
 final class SeoAssistantModuleController
 {
     private const GSC_TABLE = 'tx_seoassistant_gsc_row';
+    private const GSC_INSIGHT_TABLE = 'tx_seoassistant_gsc_insight';
     private const PAGE_SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
     private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
@@ -19,6 +21,7 @@ final class SeoAssistantModuleController
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
+        private readonly UrlNormalizer $urlNormalizer,
     ) {}
 
     public function handleRequest(ServerRequestInterface $request): ResponseInterface
@@ -34,6 +37,7 @@ final class SeoAssistantModuleController
         }
 
         $recommendations = $this->fetchRecommendations();
+        $gscInsights = $this->fetchGscInsights();
         $aiRuns = $this->fetchAiRuns();
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
@@ -66,6 +70,8 @@ final class SeoAssistantModuleController
             . '<h1>SEO Assistant</h1>'
             . '<p class="muted">Central overview for Search Console, rendered frontend audits, CMS content snapshots and reviewable recommendations.</p>'
             . $this->renderStats($stats)
+            . '<h2>GSC Trend Insights</h2>'
+            . '<div class="panel">' . $this->renderGscInsightsTable($gscInsights) . '</div>'
             . '<h2>AI Run Memory</h2>'
             . '<div class="panel">' . $this->renderAiRunsTable($aiRuns) . '</div>'
             . '<h2>Recommendations</h2>'
@@ -89,6 +95,7 @@ final class SeoAssistantModuleController
 
         $requiredTables = [
             self::GSC_TABLE,
+            self::GSC_INSIGHT_TABLE,
             self::PAGE_SNAPSHOT_TABLE,
             self::RENDERED_SNAPSHOT_TABLE,
             self::RECOMMENDATION_TABLE,
@@ -138,17 +145,39 @@ final class SeoAssistantModuleController
     /**
      * @return list<array<string,mixed>>
      */
+    private function fetchGscInsights(): array
+    {
+        $currentPageUrls = $this->fetchCurrentPageUrlKeys();
+        $rows = $this->connectionPool->getConnectionForTable(self::GSC_INSIGHT_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::GSC_INSIGHT_TABLE)
+            ->orderBy('priority', 'DESC')
+            ->addOrderBy('tstamp', 'DESC')
+            ->setMaxResults(500)
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        return array_slice($this->filterRowsByCurrentUrl($rows, 'page_url', $currentPageUrls), 0, 100);
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
     private function fetchRecommendations(): array
     {
-        return $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+        $currentPageUrls = $this->fetchCurrentPageUrlKeys();
+        $rows = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
             ->createQueryBuilder()
             ->select('*')
             ->from(self::RECOMMENDATION_TABLE)
             ->orderBy('priority', 'DESC')
             ->addOrderBy('tstamp', 'DESC')
-            ->setMaxResults(100)
+            ->setMaxResults(500)
             ->executeQuery()
             ->fetchAllAssociative();
+
+        return array_slice($this->filterRowsByCurrentUrl($rows, 'page_url', $currentPageUrls), 0, 100);
     }
 
     /**
@@ -156,16 +185,19 @@ final class SeoAssistantModuleController
      */
     private function fetchRenderedSnapshots(): array
     {
-        return $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE)
+        $currentPageUrls = $this->fetchCurrentPageUrlKeys();
+        $rows = $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE)
             ->createQueryBuilder()
             ->select('*')
             ->from(self::RENDERED_SNAPSHOT_TABLE)
             ->orderBy('missing_alt_count', 'DESC')
             ->addOrderBy('word_count', 'ASC')
             ->addOrderBy('tstamp', 'DESC')
-            ->setMaxResults(100)
+            ->setMaxResults(500)
             ->executeQuery()
             ->fetchAllAssociative();
+
+        return array_slice($this->filterRowsByCurrentUrl($rows, 'url', $currentPageUrls), 0, 100);
     }
 
     /**
@@ -185,12 +217,13 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,pages:int,rendered:int,recommendations:int,aiRuns:int}
+     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int}
      */
     private function fetchStats(): array
     {
         return [
             'gsc' => $this->countRows(self::GSC_TABLE),
+            'gscInsights' => $this->countRows(self::GSC_INSIGHT_TABLE),
             'pages' => $this->countRows(self::PAGE_SNAPSHOT_TABLE),
             'rendered' => $this->countRows(self::RENDERED_SNAPSHOT_TABLE),
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
@@ -209,17 +242,78 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,pages:int,rendered:int,recommendations:int,aiRuns:int} $stats
+     * @return array<string,bool>
+     */
+    private function fetchCurrentPageUrlKeys(): array
+    {
+        $rows = $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE)
+            ->createQueryBuilder()
+            ->select('page_url')
+            ->from(self::PAGE_SNAPSHOT_TABLE)
+            ->where('page_url <> :empty')
+            ->setParameter('empty', '')
+            ->executeQuery()
+            ->fetchFirstColumn();
+
+        $keys = [];
+        foreach ($rows as $url) {
+            $normalizedUrl = $this->urlNormalizer->normalize((string)$url);
+            if ($normalizedUrl !== '') {
+                $keys[$normalizedUrl] = true;
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rows
+     * @param array<string,bool> $currentPageUrls
+     * @return list<array<string,mixed>>
+     */
+    private function filterRowsByCurrentUrl(array $rows, string $urlColumn, array $currentPageUrls): array
+    {
+        if ($currentPageUrls === []) {
+            return [];
+        }
+
+        $filtered = [];
+        foreach ($rows as $row) {
+            $normalizedUrl = $this->urlNormalizer->normalize((string)($row[$urlColumn] ?? ''));
+            if (isset($currentPageUrls[$normalizedUrl])) {
+                $filtered[] = $row;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int} $stats
      */
     private function renderStats(array $stats): string
     {
         return '<div class="stats">'
             . '<div class="stat"><span class="muted">GSC rows</span><strong>' . $stats['gsc'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">GSC insights</span><strong>' . $stats['gscInsights'] . '</strong></div>'
             . '<div class="stat"><span class="muted">CMS pages</span><strong>' . $stats['pages'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Rendered URLs</span><strong>' . $stats['rendered'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
             . '<div class="stat"><span class="muted">AI memory runs</span><strong>' . $stats['aiRuns'] . '</strong></div>'
             . '</div>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $insights
+     */
+    private function renderGscInsightsTable(array $insights): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Priority</th><th>Trend</th><th>Page</th><th>Query</th><th>Current</th><th>Previous</th><th>Change</th><th>Meaning</th>'
+            . '</tr></thead><tbody>'
+            . ($insights === [] ? '<tr><td colspan="8" class="muted">No trend insights yet. Run <code>vendor/bin/typo3 seo:gsc:analyze-trends --sync</code>.</td></tr>' : '')
+            . implode('', array_map($this->renderGscInsightRow(...), $insights))
+            . '</tbody></table>';
     }
 
     /**
@@ -236,14 +330,45 @@ final class SeoAssistantModuleController
     }
 
     /**
+     * @param array<string,mixed> $row
+     */
+    private function renderGscInsightRow(array $row): string
+    {
+        $currentRange = $this->formatDate((int)($row['current_from'] ?? 0)) . ' - ' . $this->formatDate((int)($row['current_to'] ?? 0));
+        $previousRange = $this->formatDate((int)($row['previous_from'] ?? 0)) . ' - ' . $this->formatDate((int)($row['previous_to'] ?? 0));
+
+        return '<tr>'
+            . '<td class="priority">' . (int)($row['priority'] ?? 0) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['trend_type'] ?? '')) . '</span></td>'
+            . '<td class="url">' . $this->renderUrl((string)($row['page_url'] ?? '')) . '<br><span class="muted">page uid: ' . (int)($row['page_uid'] ?? 0) . '</span></td>'
+            . '<td>' . $this->escape((string)($row['query_text'] ?? '')) . '</td>'
+            . '<td><span class="muted">' . $this->escape($currentRange) . '</span><br>'
+            . 'clicks ' . $this->formatNumber((float)($row['current_clicks'] ?? 0)) . '<br>'
+            . 'impr. ' . $this->formatNumber((float)($row['current_impressions'] ?? 0)) . '<br>'
+            . 'CTR ' . $this->formatPercent((float)($row['current_ctr'] ?? 0)) . '<br>'
+            . 'pos. ' . $this->formatNumber((float)($row['current_position'] ?? 0), 1) . '</td>'
+            . '<td><span class="muted">' . $this->escape($previousRange) . '</span><br>'
+            . 'clicks ' . $this->formatNumber((float)($row['previous_clicks'] ?? 0)) . '<br>'
+            . 'impr. ' . $this->formatNumber((float)($row['previous_impressions'] ?? 0)) . '<br>'
+            . 'CTR ' . $this->formatPercent((float)($row['previous_ctr'] ?? 0)) . '<br>'
+            . 'pos. ' . $this->formatNumber((float)($row['previous_position'] ?? 0), 1) . '</td>'
+            . '<td>clicks ' . $this->formatSignedNumber((float)($row['clicks_delta'] ?? 0)) . '<br>'
+            . 'impr. ' . $this->formatSignedNumber((float)($row['impressions_delta'] ?? 0)) . '<br>'
+            . 'CTR ' . $this->formatSignedPercent((float)($row['ctr_delta'] ?? 0)) . '<br>'
+            . 'pos. ' . $this->formatSignedNumber((float)($row['position_delta'] ?? 0), 1) . '</td>'
+            . '<td>' . nl2br($this->escape((string)($row['summary'] ?? ''))) . '</td>'
+            . '</tr>';
+    }
+
+    /**
      * @param list<array<string,mixed>> $recommendations
      */
     private function renderRecommendationsTable(array $recommendations): string
     {
         return '<table><thead><tr>'
-            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Apply</th>'
+            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Command</th>'
             . '</tr></thead><tbody>'
-            . ($recommendations === [] ? '<tr><td colspan="10" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
+            . ($recommendations === [] ? '<tr><td colspan="12" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
             . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
             . '</tbody></table>';
     }
@@ -306,22 +431,61 @@ final class SeoAssistantModuleController
             $metadata = '<span class="muted">Manual review</span>';
         }
 
-        $applyCommand = ($row['proposed_seo_title'] !== '' || $row['proposed_description'] !== '')
+        $legacySafeMetadata = (string)($row['action_type'] ?? '') === ''
+            && ((string)($row['proposed_seo_title'] ?? '') !== '' || (string)($row['proposed_description'] ?? '') !== '');
+        $applyCommand = ((string)($row['apply_capability'] ?? '') === 'safe_metadata' || $legacySafeMetadata)
             ? 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes'
             : 'Manual content/template change';
+        $verificationCommand = (string)($row['status'] ?? '') === 'applied'
+            ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
+            : 'Apply first';
 
         return '<tr>'
             . '<td>' . (int)($row['uid'] ?? 0) . '</td>'
             . '<td class="priority">' . (int)($row['priority'] ?? 0) . '</td>'
             . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
             . '<td>' . $this->escape((string)($row['recommendation_type'] ?? '')) . '</td>'
+            . '<td>' . $this->renderActionSummary($row) . '</td>'
             . '<td class="url">' . $this->renderUrl((string)($row['page_url'] ?? '')) . '<br><span class="muted">page uid: ' . (int)($row['page_uid'] ?? 0) . '</span></td>'
             . '<td>' . $this->escape((string)($row['query_text'] ?? '')) . '</td>'
             . '<td>' . nl2br($this->escape((string)($row['issue'] ?? ''))) . '</td>'
             . '<td>' . nl2br($this->escape((string)($row['recommendation'] ?? ''))) . '</td>'
             . '<td>' . $metadata . '</td>'
-            . '<td><code>' . $this->escape($applyCommand) . '</code></td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['verification_status'] ?? 'not_checked')) . '</span></td>'
+            . '<td><code>' . $this->escape($applyCommand) . '</code><br><code>' . $this->escape($verificationCommand) . '</code></td>'
             . '</tr>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderActionSummary(array $row): string
+    {
+        $actionType = (string)($row['action_type'] ?? '');
+        if ($actionType === '') {
+            $actionType = ((string)($row['proposed_seo_title'] ?? '') !== '' || (string)($row['proposed_description'] ?? '') !== '')
+                ? 'metadata_update'
+                : 'manual_review';
+        }
+        $capability = (string)($row['apply_capability'] ?? 'manual');
+        if ($capability === 'manual' && (string)($row['action_type'] ?? '') === '' && $actionType === 'metadata_update') {
+            $capability = 'safe_metadata';
+        }
+        $payload = json_decode((string)($row['action_payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $details = '';
+        if ((string)($payload['content_brief'] ?? '') !== '') {
+            $details = '<br><span class="muted">' . $this->escape($this->shorten((string)$payload['content_brief'], 120)) . '</span>';
+        } elseif ((string)($payload['structured_data_type'] ?? '') !== '') {
+            $details = '<br><span class="muted">Schema: ' . $this->escape((string)$payload['structured_data_type']) . '</span>';
+        } elseif (($payload['image_alt_suggestions'] ?? []) !== [] && is_array($payload['image_alt_suggestions'])) {
+            $details = '<br><span class="muted">Images: ' . count($payload['image_alt_suggestions']) . '</span>';
+        }
+
+        return '<span class="pill">' . $this->escape($actionType) . '</span><br><span class="muted">' . $this->escape($capability) . '</span>' . $details;
     }
 
     /**
@@ -399,6 +563,47 @@ final class SeoAssistantModuleController
         }
 
         return rtrim(mb_substr($value, 0, max(0, $limit - 1))) . '...';
+    }
+
+    private function formatDate(int $timestamp): string
+    {
+        return $timestamp > 0 ? date('Y-m-d', $timestamp) : '-';
+    }
+
+    private function formatNumber(float $value, int $decimals = 0): string
+    {
+        return number_format($value, $decimals, '.', ',');
+    }
+
+    private function formatSignedNumber(float $value, int $decimals = 0): string
+    {
+        $formatted = $this->formatNumber(abs($value), $decimals);
+        if ($value > 0) {
+            return '+' . $formatted;
+        }
+        if ($value < 0) {
+            return '-' . $formatted;
+        }
+
+        return $formatted;
+    }
+
+    private function formatPercent(float $value): string
+    {
+        return number_format($value * 100, 2, '.', ',') . '%';
+    }
+
+    private function formatSignedPercent(float $value): string
+    {
+        $formatted = $this->formatPercent(abs($value));
+        if ($value > 0) {
+            return '+' . $formatted;
+        }
+        if ($value < 0) {
+            return '-' . $formatted;
+        }
+
+        return $formatted;
     }
 
     private function escape(string $value): string

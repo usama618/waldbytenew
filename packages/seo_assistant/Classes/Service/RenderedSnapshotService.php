@@ -27,7 +27,7 @@ final class RenderedSnapshotService
 
     /**
      * @param list<string> $explicitUrls
-     * @return array{processed:int,stored:int,failed:int,baseUrl:string}
+     * @return array{processed:int,stored:int,failed:int,skippedGsc:int,baseUrl:string}
      */
     public function snapshot(
         ?string $baseUrl = null,
@@ -36,7 +36,8 @@ final class RenderedSnapshotService
         bool $dryRun = false,
     ): array {
         $baseUrl = $this->configuration->getBaseUrl($baseUrl);
-        $urls = $this->collectUrls($baseUrl, $explicitUrls, $limit);
+        $collection = $this->collectUrls($baseUrl, $explicitUrls, $limit);
+        $urls = $collection['urls'];
         $stored = 0;
         $failed = 0;
 
@@ -54,13 +55,14 @@ final class RenderedSnapshotService
             'processed' => count($urls),
             'stored' => $stored,
             'failed' => $failed,
+            'skippedGsc' => $collection['skippedGsc'],
             'baseUrl' => $baseUrl,
         ];
     }
 
     /**
      * @param list<string> $explicitUrls
-     * @return list<string>
+     * @return array{urls:list<string>,skippedGsc:int}
      */
     private function collectUrls(string $baseUrl, array $explicitUrls, int $limit): array
     {
@@ -69,17 +71,17 @@ final class RenderedSnapshotService
             $this->addUrl($urls, $this->absolutizeUrl($url, $baseUrl), $baseUrl);
         }
 
-        $connection = $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE);
-        foreach ($connection->createQueryBuilder()
-            ->select('page_url')
-            ->from(self::PAGE_SNAPSHOT_TABLE)
-            ->where('page_url <> :empty')
-            ->setParameter('empty', '')
-            ->executeQuery()
-            ->fetchFirstColumn() as $url) {
-            $this->addUrl($urls, (string)$url, $baseUrl);
+        $currentPageUrls = [];
+        foreach ($this->fetchCurrentPageUrls() as $url) {
+            $url = (string)$url;
+            if (!$this->isCrawlableUrl($url, $baseUrl)) {
+                continue;
+            }
+            $currentPageUrls[$this->urlNormalizer->normalize($url)] = true;
+            $this->addUrl($urls, $url, $baseUrl);
         }
 
+        $skippedGsc = 0;
         $connection = $this->connectionPool->getConnectionForTable(self::GSC_TABLE);
         foreach ($connection->createQueryBuilder()
             ->select('page_url')
@@ -92,10 +94,41 @@ final class RenderedSnapshotService
             ->setParameter('empty', '')
             ->executeQuery()
             ->fetchFirstColumn() as $url) {
-            $this->addUrl($urls, (string)$url, $baseUrl);
+            $url = (string)$url;
+            $normalizedUrl = $this->urlNormalizer->normalize($url);
+            if (!isset($currentPageUrls[$normalizedUrl])) {
+                $skippedGsc++;
+                continue;
+            }
+            if (isset($urls[$normalizedUrl])) {
+                continue;
+            }
+            $this->addUrl($urls, $url, $baseUrl);
         }
 
-        return array_slice(array_values($urls), 0, max(1, $limit));
+        return [
+            'urls' => array_slice(array_values($urls), 0, max(1, $limit)),
+            'skippedGsc' => $skippedGsc,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function fetchCurrentPageUrls(): array
+    {
+        $connection = $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE);
+
+        return array_values(array_map(
+            'strval',
+            $connection->createQueryBuilder()
+                ->select('page_url')
+                ->from(self::PAGE_SNAPSHOT_TABLE)
+                ->where('page_url <> :empty')
+                ->setParameter('empty', '')
+                ->executeQuery()
+                ->fetchFirstColumn()
+        ));
     }
 
     /**

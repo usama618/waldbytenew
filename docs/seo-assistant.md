@@ -33,6 +33,17 @@ AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` and `SEO_ASSISTANT_OPENAI_MODE
 
 AI runs keep compact memory in the database. The extension stores the latest 10 AI generation runs and sends those summaries into the next AI run as context.
 
+Recommendations now include typed action metadata:
+
+- `metadata_update`: safe apply candidate for `pages.seo_title` and/or `pages.description`
+- `content_gap_brief`: editor brief for missing/weak page content
+- `internal_link_suggestion`: manual internal-link direction
+- `image_alt_suggestion`: manual image alt review
+- `structured_data_suggestion`: schema idea for implementation through the site package renderer
+- `technical_indexing_issue`: routing, robots, canonical or HTTP issue requiring manual review
+
+Only `metadata_update` rows with `apply_capability=safe_metadata` can be applied automatically.
+
 ## First run
 
 After deployment, run TYPO3 extension setup so the tables from `ext_tables.sql` exist:
@@ -48,11 +59,42 @@ Then build the data pipeline:
 ```bash
 vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
+vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate
 ```
 
 Open the TYPO3 backend module `Web > SEO Assistant` to review AI run memory, drafts, rendered URL issues, and CMS content snapshots centrally.
+
+Search Console can still contain URLs from the previous website. These are intentionally ignored
+unless they match a URL from the current TYPO3 page snapshot. Run `seo:pages:snapshot` first so the
+assistant knows which URLs belong to the current website.
+
+## GSC Trend Analysis
+
+Use this to understand which content is working or not working over time:
+
+```bash
+vendor/bin/typo3 seo:gsc:analyze-trends --sync
+```
+
+By default it fetches and compares two exact 28-day Search Console windows: the latest complete
+28 days against the previous 28 days. The analysis stores page/query insights for current TYPO3
+pages only, including:
+
+- `content_working`: organic clicks are increasing
+- `content_declining`: organic clicks are decreasing
+- `visibility_opportunity`: impressions are increasing but clicks are not following
+- `content_not_working`: impressions exist but organic clicks stay very weak
+- `striking_distance`: rankings are within reach and need stronger content/snippets/internal links
+
+For custom windows:
+
+```bash
+vendor/bin/typo3 seo:gsc:analyze-trends --sync \
+  --previous-start=2026-05-11 --previous-end=2026-06-07 \
+  --current-start=2026-06-08 --current-end=2026-07-05
+```
 
 ## Safe apply flow
 
@@ -63,7 +105,18 @@ vendor/bin/typo3 seo:recommendations:apply --uid=123
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
-The first command is a dry run. The second command writes the metadata.
+The first command is a dry run. The second command writes safe metadata only, records the applied
+field values, and sets verification to pending.
+
+After applying, verify against the rendered frontend output:
+
+```bash
+vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh
+vendor/bin/typo3 seo:recommendations:verify --all --refresh
+```
+
+The `--refresh` option re-runs a rendered snapshot for the affected URL before comparing the applied
+metadata with the current HTML title and meta description.
 
 ## Suggested cron
 
@@ -73,8 +126,10 @@ Run this daily or weekly on the live server:
 cd /var/www/waldbytenew/current
 vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
+vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=10
+vendor/bin/typo3 seo:recommendations:verify --all
 ```
 
 The rendered snapshot command crawls only the configured same-host URLs. It uses CMS page snapshots and Search Console page URLs as its source list.

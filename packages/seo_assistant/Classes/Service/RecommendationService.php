@@ -27,8 +27,9 @@ final class RecommendationService
     public function generate(int $minImpressions = 20, int $limit = 100, bool $useAi = true, int $aiLimit = 10): array
     {
         $snapshots = $this->fetchSnapshotsByUrl();
-        $renderedSnapshots = $this->fetchRenderedSnapshotsByUrl();
-        $candidates = $this->fetchGscCandidates($minImpressions, $limit);
+        $currentPageUrls = array_fill_keys(array_keys($snapshots), true);
+        $renderedSnapshots = $this->fetchRenderedSnapshotsByUrl($currentPageUrls);
+        $candidates = $this->fetchGscCandidates($minImpressions, $limit, $currentPageUrls);
         $stored = 0;
         $aiUsed = 0;
         $fallbackUsed = false;
@@ -91,7 +92,7 @@ final class RecommendationService
     /**
      * @return array<string,array<string,mixed>>
      */
-    private function fetchRenderedSnapshotsByUrl(): array
+    private function fetchRenderedSnapshotsByUrl(array $currentPageUrls): array
     {
         $connection = $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE);
         $rows = $connection->createQueryBuilder()
@@ -102,7 +103,11 @@ final class RecommendationService
 
         $snapshots = [];
         foreach ($rows as $row) {
-            $snapshots[$this->urlNormalizer->normalize((string)($row['url'] ?? ''))] = $row;
+            $normalizedUrl = $this->urlNormalizer->normalize((string)($row['url'] ?? ''));
+            if (!isset($currentPageUrls[$normalizedUrl])) {
+                continue;
+            }
+            $snapshots[$normalizedUrl] = $row;
         }
 
         return $snapshots;
@@ -111,8 +116,12 @@ final class RecommendationService
     /**
      * @return list<array<string,mixed>>
      */
-    private function fetchGscCandidates(int $minImpressions, int $limit): array
+    private function fetchGscCandidates(int $minImpressions, int $limit, array $currentPageUrls): array
     {
+        if ($currentPageUrls === []) {
+            return [];
+        }
+
         $connection = $this->connectionPool->getConnectionForTable(self::GSC_TABLE);
         $queryBuilder = $connection->createQueryBuilder();
         $queryBuilder
@@ -127,11 +136,23 @@ final class RecommendationService
             ->having('SUM(impressions) >= :minImpressions')
             ->orderBy('impressions_sum', 'DESC')
             ->addOrderBy('avg_position', 'ASC')
-            ->setMaxResults(max(1, $limit))
+            ->setMaxResults(max(1, min(5000, $limit * 20)))
             ->setParameter('empty', '')
             ->setParameter('minImpressions', max(1, $minImpressions), Connection::PARAM_INT);
 
-        return $queryBuilder->executeQuery()->fetchAllAssociative();
+        $candidates = [];
+        foreach ($queryBuilder->executeQuery()->fetchAllAssociative() as $row) {
+            $normalizedUrl = $this->urlNormalizer->normalize((string)($row['page_url'] ?? ''));
+            if (!isset($currentPageUrls[$normalizedUrl])) {
+                continue;
+            }
+            $candidates[] = $row;
+            if (count($candidates) >= max(1, $limit)) {
+                break;
+            }
+        }
+
+        return $candidates;
     }
 
     /**
@@ -332,7 +353,7 @@ final class RecommendationService
     }
 
     /**
-     * @param array{recommendation_type:string,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int} $aiRecommendation
+     * @param array{recommendation_type:string,action_type:string,action_payload:array<string,mixed>,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int} $aiRecommendation
      * @param array<string,mixed> $context
      * @return array<string,mixed>
      */
@@ -340,6 +361,14 @@ final class RecommendationService
     {
         $pageUrl = (string)($context['page_url'] ?? '');
         $type = $this->normalizeRecommendationType($aiRecommendation['recommendation_type']);
+        $actionType = $this->normalizeActionType($aiRecommendation['action_type']);
+        $actionPayload = $this->normalizeActionPayload(
+            $aiRecommendation['action_payload'],
+            $actionType,
+            (int)($context['page_uid'] ?? 0),
+            $aiRecommendation['proposed_seo_title'],
+            $aiRecommendation['proposed_description']
+        );
         $query = $aiRecommendation['query_text'];
 
         return [
@@ -354,6 +383,9 @@ final class RecommendationService
             'status' => 'draft',
             'issue' => $aiRecommendation['issue'],
             'recommendation' => $aiRecommendation['recommendation'],
+            'action_type' => $actionType,
+            'action_payload_json' => $this->json($actionPayload),
+            'apply_capability' => $this->applyCapabilityForAction($actionType, $actionPayload),
             'proposed_seo_title' => $aiRecommendation['proposed_seo_title'],
             'proposed_description' => $aiRecommendation['proposed_description'],
             'evidence_json' => json_encode([
@@ -372,8 +404,12 @@ final class RecommendationService
                 $query,
                 mb_substr($aiRecommendation['issue'], 0, 160),
             ])),
+            'applied_changes_json' => '',
+            'verification_status' => 'not_checked',
+            'verification_json' => '',
             'approved_at' => 0,
             'applied_at' => 0,
+            'verified_at' => 0,
         ];
     }
 
@@ -384,6 +420,127 @@ final class RecommendationService
         $type = trim($type, '_');
 
         return $type !== '' ? mb_substr($type, 0, 48) : 'recommendation';
+    }
+
+    private function normalizeActionType(string $actionType): string
+    {
+        $actionType = strtolower(trim($actionType));
+        $allowed = [
+            'metadata_update',
+            'content_gap_brief',
+            'internal_link_suggestion',
+            'image_alt_suggestion',
+            'structured_data_suggestion',
+            'technical_indexing_issue',
+            'manual_review',
+        ];
+
+        return in_array($actionType, $allowed, true) ? $actionType : 'manual_review';
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function normalizeActionPayload(array $payload, string $actionType, int $pageUid, string $proposedTitle = '', string $proposedDescription = ''): array
+    {
+        $targetTable = trim((string)($payload['target_table'] ?? ''));
+        if ($actionType === 'metadata_update' && $targetTable === '') {
+            $targetTable = 'pages';
+        }
+        $targetUid = (int)($payload['target_uid'] ?? 0);
+        if ($targetUid <= 0) {
+            $targetUid = $pageUid;
+        }
+
+        return [
+            'target_table' => $targetTable,
+            'target_uid' => max(0, $targetUid),
+            'seo_title' => mb_substr(trim((string)($payload['seo_title'] ?? $proposedTitle)), 0, 60),
+            'description' => mb_substr(trim((string)($payload['description'] ?? $proposedDescription)), 0, 155),
+            'content_brief' => mb_substr(trim((string)($payload['content_brief'] ?? '')), 0, 1800),
+            'suggested_headings' => $this->normalizeStringList($payload['suggested_headings'] ?? [], 8, 120),
+            'suggested_links' => $this->normalizeSuggestionRows($payload['suggested_links'] ?? [], ['source_url', 'target_url', 'anchor_text', 'reason'], 8),
+            'image_alt_suggestions' => $this->normalizeSuggestionRows($payload['image_alt_suggestions'] ?? [], ['src', 'alt_text', 'reason'], 12),
+            'structured_data_type' => mb_substr(trim((string)($payload['structured_data_type'] ?? '')), 0, 80),
+            'structured_data_preview' => mb_substr(trim((string)($payload['structured_data_preview'] ?? '')), 0, 2200),
+            'technical_steps' => $this->normalizeStringList($payload['technical_steps'] ?? [], 8, 220),
+        ];
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<string>
+     */
+    private function normalizeStringList($items, int $limit, int $itemLength): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $values = [];
+        foreach ($items as $item) {
+            $value = mb_substr(trim((string)$item), 0, $itemLength);
+            if ($value !== '') {
+                $values[] = $value;
+            }
+            if (count($values) >= $limit) {
+                break;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param mixed $items
+     * @param list<string> $columns
+     * @return list<array<string,string>>
+     */
+    private function normalizeSuggestionRows($items, array $columns, int $limit): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $rows = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $row = [];
+            $hasUsefulValue = false;
+            foreach ($columns as $column) {
+                $limitLength = str_contains($column, 'url') || $column === 'src' ? 2048 : 260;
+                $value = mb_substr(trim((string)($item[$column] ?? '')), 0, $limitLength);
+                $row[$column] = $value;
+                $hasUsefulValue = $hasUsefulValue || $value !== '';
+            }
+            if ($hasUsefulValue) {
+                $rows[] = $row;
+            }
+            if (count($rows) >= $limit) {
+                break;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function applyCapabilityForAction(string $actionType, array $payload): string
+    {
+        if (
+            $actionType === 'metadata_update'
+            && (string)($payload['target_table'] ?? '') === 'pages'
+            && ((string)($payload['seo_title'] ?? '') !== '' || (string)($payload['description'] ?? '') !== '')
+        ) {
+            return 'safe_metadata';
+        }
+
+        return 'manual';
     }
 
     /**
@@ -473,14 +630,47 @@ final class RecommendationService
             return null;
         }
 
-        $proposedTitle = $this->buildProposedTitle($query, $snapshot, $renderedSnapshot);
-        $proposedDescription = $this->buildProposedDescription($query);
+        $pageUid = (int)($snapshot['page_uid'] ?? 0);
+        $proposedTitle = '';
+        $proposedDescription = '';
+        $actionType = 'content_gap_brief';
+        $actionPayload = [
+            'target_table' => '',
+            'target_uid' => $pageUid,
+            'seo_title' => '',
+            'description' => '',
+            'content_brief' => $this->buildContentBrief($query, $type, $position, $impressions, $ctr),
+            'suggested_headings' => $this->buildSuggestedHeadings($query),
+            'suggested_links' => [],
+            'image_alt_suggestions' => [],
+            'structured_data_type' => '',
+            'structured_data_preview' => '',
+            'technical_steps' => [],
+        ];
+
+        if (in_array($type, ['missing_meta_description', 'low_ctr'], true)) {
+            $actionType = 'metadata_update';
+            $proposedTitle = $type === 'low_ctr' ? $this->buildProposedTitle($query, $snapshot, $renderedSnapshot) : '';
+            $proposedDescription = $this->buildProposedDescription($query);
+            $actionPayload = $this->normalizeActionPayload(
+                [
+                    'target_table' => 'pages',
+                    'target_uid' => $pageUid,
+                    'seo_title' => $proposedTitle,
+                    'description' => $proposedDescription,
+                ],
+                $actionType,
+                $pageUid,
+                $proposedTitle,
+                $proposedDescription
+            );
+        }
 
         return [
             'pid' => 0,
             'tstamp' => time(),
             'crdate' => time(),
-            'page_uid' => (int)($snapshot['page_uid'] ?? 0),
+            'page_uid' => $pageUid,
             'page_url' => $pageUrl,
             'query_text' => $query,
             'recommendation_type' => $type,
@@ -488,6 +678,9 @@ final class RecommendationService
             'status' => 'draft',
             'issue' => $issue,
             'recommendation' => $action,
+            'action_type' => $actionType,
+            'action_payload_json' => $this->json($actionPayload),
+            'apply_capability' => $this->applyCapabilityForAction($actionType, $actionPayload),
             'proposed_seo_title' => $proposedTitle,
             'proposed_description' => $proposedDescription,
             'evidence_json' => json_encode([
@@ -499,8 +692,12 @@ final class RecommendationService
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'ai_model' => '',
             'dedupe_hash' => hash('sha256', implode('|', [$type, $pageUrl, $query])),
+            'applied_changes_json' => '',
+            'verification_status' => 'not_checked',
+            'verification_json' => '',
             'approved_at' => 0,
             'applied_at' => 0,
+            'verified_at' => 0,
         ];
     }
 
@@ -572,6 +769,37 @@ final class RecommendationService
         return mb_substr($description, 0, 155);
     }
 
+    private function buildContentBrief(string $query, string $type, float $position, float $impressions, float $ctr): string
+    {
+        $brief = 'Redaktionell pruefen: Die Seite erzeugt Sichtbarkeit fuer "' . $query . '", beantwortet die Suchintention aber noch nicht klar genug.';
+        if ($type === 'striking_distance') {
+            $brief = 'Striking-distance Chance: Die Seite rankt fuer "' . $query . '" im erreichbaren Bereich. Einen konkreten Abschnitt ergaenzen, der Zielgruppe, Problem, Loesungsweg und naechsten Schritt klar beschreibt.';
+        }
+        if ($type === 'content_gap') {
+            $brief = 'Content Gap: Die Anfrage "' . $query . '" ist in Title, Description, H1/H2 oder sichtbarem Text nicht klar genug abgedeckt. Einen hilfreichen Abschnitt mit natuerlicher Begriffsnutzung ergaenzen.';
+        }
+
+        return $brief . ' Daten: Position ' . round($position, 1) . ', Impressionen ' . (int)$impressions . ', CTR ' . round($ctr * 100, 2) . '%.';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function buildSuggestedHeadings(string $query): array
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return [];
+        }
+
+        $label = ucfirst($query);
+        return [
+            $label . ': worauf Unternehmen achten sollten',
+            'Wann sich ' . $query . ' lohnt',
+            'Wie WALDBYTE bei ' . $query . ' unterstuetzt',
+        ];
+    }
+
     /**
      * @param array<string,array<string,mixed>> $renderedSnapshots
      * @param array<string,array<string,mixed>> $cmsSnapshots
@@ -641,11 +869,39 @@ final class RecommendationService
             $issueText = $defaultIssue;
         }
 
+        $pageUid = (int)($cmsSnapshot['page_uid'] ?? 0);
+        $proposedTitle = $code === 'missing_title' ? mb_substr((string)($cmsSnapshot['title'] ?? 'WALDBYTE'), 0, 60) : '';
+        $proposedDescription = $code === 'missing_meta_description'
+            ? 'WALDBYTE entwickelt TYPO3 Websites, Webdesign und Onlineshops fuer Unternehmen in der Region Karlsruhe.'
+            : '';
+        $actionType = match ($code) {
+            'missing_title', 'missing_meta_description', 'long_title', 'long_meta_description' => 'metadata_update',
+            'missing_image_alt' => 'image_alt_suggestion',
+            'missing_structured_data' => 'structured_data_suggestion',
+            'thin_content', 'missing_h1', 'multiple_h1' => 'content_gap_brief',
+            default => 'technical_indexing_issue',
+        };
+        if ($code === 'long_title') {
+            $proposedTitle = $this->shortenMetadata((string)($renderedSnapshot['html_title'] ?? ''), 60);
+        }
+        if ($code === 'long_meta_description') {
+            $proposedDescription = $this->shortenMetadata((string)($renderedSnapshot['meta_description'] ?? ''), 155);
+        }
+        $actionPayload = $this->buildRenderedActionPayload(
+            $code,
+            $actionType,
+            $pageUid,
+            $url,
+            $proposedTitle,
+            $proposedDescription,
+            $renderedSnapshot
+        );
+
         return [
             'pid' => 0,
             'tstamp' => time(),
             'crdate' => time(),
-            'page_uid' => (int)($cmsSnapshot['page_uid'] ?? 0),
+            'page_uid' => $pageUid,
             'page_url' => $url,
             'query_text' => '',
             'recommendation_type' => 'rendered_' . $code,
@@ -653,10 +909,11 @@ final class RecommendationService
             'status' => 'draft',
             'issue' => $issueText,
             'recommendation' => $action,
-            'proposed_seo_title' => $code === 'missing_title' ? mb_substr((string)($cmsSnapshot['title'] ?? 'WALDBYTE'), 0, 60) : '',
-            'proposed_description' => $code === 'missing_meta_description'
-                ? 'WALDBYTE entwickelt TYPO3 Websites, Webdesign und Onlineshops fuer Unternehmen in der Region Karlsruhe.'
-                : '',
+            'action_type' => $actionType,
+            'action_payload_json' => $this->json($actionPayload),
+            'apply_capability' => $this->applyCapabilityForAction($actionType, $actionPayload),
+            'proposed_seo_title' => $proposedTitle,
+            'proposed_description' => $proposedDescription,
             'evidence_json' => json_encode([
                 'rendered_url' => $url,
                 'http_status' => (int)($renderedSnapshot['http_status'] ?? 0),
@@ -668,9 +925,134 @@ final class RecommendationService
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'ai_model' => '',
             'dedupe_hash' => hash('sha256', implode('|', ['rendered', $code, $url])),
+            'applied_changes_json' => '',
+            'verification_status' => 'not_checked',
+            'verification_json' => '',
             'approved_at' => 0,
             'applied_at' => 0,
+            'verified_at' => 0,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $renderedSnapshot
+     * @return array<string,mixed>
+     */
+    private function buildRenderedActionPayload(
+        string $code,
+        string $actionType,
+        int $pageUid,
+        string $url,
+        string $proposedTitle,
+        string $proposedDescription,
+        array $renderedSnapshot,
+    ): array {
+        $payload = [
+            'target_table' => $actionType === 'metadata_update' ? 'pages' : '',
+            'target_uid' => $pageUid,
+            'seo_title' => $proposedTitle,
+            'description' => $proposedDescription,
+            'content_brief' => '',
+            'suggested_headings' => [],
+            'suggested_links' => [],
+            'image_alt_suggestions' => [],
+            'structured_data_type' => '',
+            'structured_data_preview' => '',
+            'technical_steps' => [],
+        ];
+
+        if ($actionType === 'content_gap_brief') {
+            $payload['content_brief'] = match ($code) {
+                'missing_h1' => 'Eine eindeutige H1 fuer die Seite ergaenzen. Sie sollte Thema, Leistung und Suchintention klar zusammenfassen.',
+                'multiple_h1' => 'Headings pruefen: eine Haupt-H1 behalten und weitere Hauptueberschriften in H2/H3 umwandeln.',
+                default => 'Sichtbaren Hauptinhalt ausbauen. Die Seite hat aktuell wenig Text und braucht konkrete Nutzenargumente, Leistungsdetails, Ablauf oder FAQ-Antworten.',
+            };
+            $title = trim((string)($renderedSnapshot['html_title'] ?? ''));
+            $payload['suggested_headings'] = $title !== '' ? [$this->shortenMetadata($title, 90)] : [];
+        }
+
+        if ($actionType === 'image_alt_suggestion') {
+            $payload['content_brief'] = 'Fehlende Alt-Texte fuer Inhaltsbilder im TYPO3 Backend pruefen. Dekorative Bilder sollten bewusst leer bleiben, Inhaltsbilder brauchen beschreibende Alt-Texte.';
+            $payload['image_alt_suggestions'] = $this->buildMissingAltPayload($renderedSnapshot);
+        }
+
+        if ($actionType === 'structured_data_suggestion') {
+            $schemaType = $this->guessStructuredDataType($url);
+            $payload['structured_data_type'] = $schemaType;
+            $payload['structured_data_preview'] = 'Schema-Vorschlag ueber den SitePackage StructuredDataRenderer umsetzen: ' . $schemaType . ' fuer ' . $url . '. Vor Ausgabe JSON-LD validieren.';
+        }
+
+        if ($actionType === 'technical_indexing_issue') {
+            $payload['technical_steps'] = match ($code) {
+                'http_error' => ['HTTP Status pruefen', 'TYPO3 Routing und Seitensichtbarkeit pruefen', 'Redirect oder Veroeffentlichungsstatus korrigieren'],
+                'fetch_failed' => ['Server-Erreichbarkeit pruefen', 'TLS/Firewall/Crawler-Zugriff pruefen', 'URL nach Korrektur erneut rendern'],
+                'noindex' => ['Klaeren, ob die Seite indexiert werden soll', 'no_index im Seitenrecord oder Template entfernen', 'Nach Deployment gerenderten Robots-Meta erneut pruefen'],
+                'missing_canonical' => ['Canonical-Ausgabe im Template pruefen', 'Kanonsche URL fuer diese Seite bestimmen', 'Nach Korrektur gerenderte Seite erneut snapshotten'],
+                default => ['Technisches SEO-Problem im Template oder Seitenrecord pruefen', 'Korrektur deployen', 'Rendered Snapshot erneut ausfuehren'],
+            };
+        }
+
+        return $this->normalizeActionPayload($payload, $actionType, $pageUid, $proposedTitle, $proposedDescription);
+    }
+
+    /**
+     * @param array<string,mixed> $renderedSnapshot
+     * @return list<array<string,string>>
+     */
+    private function buildMissingAltPayload(array $renderedSnapshot): array
+    {
+        $images = json_decode((string)($renderedSnapshot['images_json'] ?? '[]'), true);
+        if (!is_array($images)) {
+            return [];
+        }
+
+        $suggestions = [];
+        foreach ($images as $image) {
+            if (!is_array($image) || empty($image['missing_alt'])) {
+                continue;
+            }
+            $suggestions[] = [
+                'src' => (string)($image['src'] ?? ''),
+                'alt_text' => '',
+                'reason' => 'Rendered image has an empty alt attribute. Review the image context before writing alt text.',
+            ];
+            if (count($suggestions) >= 12) {
+                break;
+            }
+        }
+
+        return $suggestions;
+    }
+
+    private function guessStructuredDataType(string $url): string
+    {
+        $path = strtolower((string)(parse_url($url, PHP_URL_PATH) ?: ''));
+        if (str_contains($path, 'blog') || str_contains($path, 'artikel')) {
+            return 'BlogPosting';
+        }
+        if (str_contains($path, 'leistungen') || str_contains($path, 'technologien')) {
+            return 'Service';
+        }
+
+        return 'WebPage';
+    }
+
+    private function shortenMetadata(string $value, int $limit): string
+    {
+        $value = trim($value);
+        if ($value === '' || mb_strlen($value) <= $limit) {
+            return $value;
+        }
+
+        return rtrim(mb_substr($value, 0, max(0, $limit - 1))) . '...';
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function json($value): string
+    {
+        return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
     }
 
     /**
@@ -696,6 +1078,7 @@ final class RecommendationService
             'priority' => Connection::PARAM_INT,
             'approved_at' => Connection::PARAM_INT,
             'applied_at' => Connection::PARAM_INT,
+            'verified_at' => Connection::PARAM_INT,
         ];
 
         if (is_array($existing) && (int)$existing['uid'] > 0) {

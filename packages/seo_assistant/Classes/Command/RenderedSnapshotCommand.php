@@ -50,11 +50,12 @@ final class RenderedSnapshotCommand extends Command
         }
 
         $io->success(sprintf(
-            'Rendered snapshot complete for %s: processed %d URLs, stored %d snapshots, %d failed.',
+            'Rendered snapshot complete for %s: processed %d URLs, stored %d snapshots, %d failed, skipped %d stale GSC URLs.',
             $result['baseUrl'],
             $result['processed'],
             $result['stored'],
-            $result['failed']
+            $result['failed'],
+            $result['skippedGsc']
         ));
 
         return Command::SUCCESS;

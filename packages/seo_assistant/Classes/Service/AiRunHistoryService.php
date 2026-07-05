@@ -160,6 +160,8 @@ final class AiRunHistoryService
         return [
             'page_url' => (string)($recommendation['page_url'] ?? ''),
             'type' => (string)($recommendation['recommendation_type'] ?? ''),
+            'action' => (string)($recommendation['action_type'] ?? ''),
+            'apply_capability' => (string)($recommendation['apply_capability'] ?? ''),
             'query' => (string)($recommendation['query_text'] ?? ''),
             'priority' => (int)($recommendation['priority'] ?? 0),
             'issue' => mb_substr((string)($recommendation['issue'] ?? ''), 0, 220),
