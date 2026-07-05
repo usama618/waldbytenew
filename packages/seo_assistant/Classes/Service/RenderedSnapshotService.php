@@ -83,7 +83,7 @@ final class RenderedSnapshotService
         $connection = $this->connectionPool->getConnectionForTable(self::GSC_TABLE);
         foreach ($connection->createQueryBuilder()
             ->select('page_url')
-            ->addSelect('MAX(impressions) AS max_impressions')
+            ->addSelectLiteral('MAX(impressions) AS max_impressions')
             ->from(self::GSC_TABLE)
             ->where('page_url <> :empty')
             ->groupBy('page_url')

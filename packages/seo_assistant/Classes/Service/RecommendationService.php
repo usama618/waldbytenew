@@ -117,9 +117,9 @@ final class RecommendationService
         $queryBuilder = $connection->createQueryBuilder();
         $queryBuilder
             ->select('page_url', 'query_text')
-            ->addSelect('SUM(clicks) AS clicks_sum')
-            ->addSelect('SUM(impressions) AS impressions_sum')
-            ->addSelect('AVG(position) AS avg_position')
+            ->addSelectLiteral('SUM(clicks) AS clicks_sum')
+            ->addSelectLiteral('SUM(impressions) AS impressions_sum')
+            ->addSelectLiteral('AVG(position) AS avg_position')
             ->from(self::GSC_TABLE)
             ->where('page_url <> :empty')
             ->andWhere('query_text <> :empty')
