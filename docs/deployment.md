@@ -179,6 +179,18 @@ base64 -i config/system/settings.php | tr -d '\n'
 9. `current` is switched atomically to the new release.
 10. TYPO3 cache is flushed and old releases are cleaned.
 
+The rsync excludes intentionally only block root-level SQL dumps (`/*.sql`, `/*.sql.gz`). Do not use a broad `*.sql` exclude here, because TYPO3 extension schema files such as `packages/site_package/ext_tables.sql` must reach the release for `extension:setup` to create or update custom columns.
+
+## Schema Repair
+
+If live reports an unknown `fieldname` column for `tx_sitepackage_*` tables, first deploy a release containing the extension `ext_tables.sql` files, then run:
+
+```bash
+cd /var/www/waldbytenew/current
+vendor/bin/typo3 extension:setup
+vendor/bin/typo3 cache:flush
+```
+
 ## Rollback
 
 From a machine with SSH access and project dependencies installed:

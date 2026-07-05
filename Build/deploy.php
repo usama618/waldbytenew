@@ -82,8 +82,9 @@ set('rsync', [
         'var',
         'vendor',
         'waldbytefinal.sql',
-        '*.sql',
-        '*.sql.gz',
+        // Keep extension ext_tables.sql files deployable; TYPO3 needs them during extension:setup.
+        '/*.sql',
+        '/*.sql.gz',
         '*.zip',
     ],
     'exclude-file' => false,
