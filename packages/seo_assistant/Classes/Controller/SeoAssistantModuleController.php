@@ -241,9 +241,9 @@ final class SeoAssistantModuleController
     private function renderRecommendationsTable(array $recommendations): string
     {
         return '<table><thead><tr>'
-            . '<th>Priority</th><th>Status</th><th>Type</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Apply</th>'
+            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Apply</th>'
             . '</tr></thead><tbody>'
-            . ($recommendations === [] ? '<tr><td colspan="9" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
+            . ($recommendations === [] ? '<tr><td colspan="10" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
             . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
             . '</tbody></table>';
     }
@@ -306,11 +306,12 @@ final class SeoAssistantModuleController
             $metadata = '<span class="muted">Manual review</span>';
         }
 
-        $applyCommand = (int)($row['page_uid'] ?? 0) > 0 && ($row['proposed_seo_title'] !== '' || $row['proposed_description'] !== '')
+        $applyCommand = ($row['proposed_seo_title'] !== '' || $row['proposed_description'] !== '')
             ? 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes'
             : 'Manual content/template change';
 
         return '<tr>'
+            . '<td>' . (int)($row['uid'] ?? 0) . '</td>'
             . '<td class="priority">' . (int)($row['priority'] ?? 0) . '</td>'
             . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
             . '<td>' . $this->escape((string)($row['recommendation_type'] ?? '')) . '</td>'

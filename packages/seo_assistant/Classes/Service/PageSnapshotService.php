@@ -80,7 +80,8 @@ final class PageSnapshotService
             $queryBuilder->andWhere('sys_language_uid = 0');
         }
         if (in_array('doktype', $columns, true)) {
-            $queryBuilder->andWhere('doktype IN (1, 4)');
+            // Include normal pages, shortcuts, and TYPO3 Blog pages/posts.
+            $queryBuilder->andWhere('doktype IN (1, 4, 137, 138)');
         }
         if (in_array('sorting', $columns, true)) {
             $queryBuilder->orderBy('sorting', 'ASC');

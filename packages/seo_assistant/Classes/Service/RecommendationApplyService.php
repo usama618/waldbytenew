@@ -24,7 +24,10 @@ final class RecommendationApplyService
         $recommendation = $this->fetchRecommendation($recommendationUid);
         $pageUid = (int)($recommendation['page_uid'] ?? 0);
         if ($pageUid <= 0) {
-            throw new RuntimeException('Recommendation has no TYPO3 page_uid. Apply the suggestion manually.', 1760000041);
+            $pageUid = $this->resolvePageUidFromUrl((string)($recommendation['page_url'] ?? ''));
+        }
+        if ($pageUid <= 0) {
+            throw new RuntimeException('Recommendation has no TYPO3 page_uid and the page could not be resolved from its URL. Apply the suggestion manually.', 1760000041);
         }
 
         $status = (string)($recommendation['status'] ?? '');
@@ -59,12 +62,14 @@ final class RecommendationApplyService
                 ->update(
                     self::RECOMMENDATION_TABLE,
                     [
+                        'page_uid' => $pageUid,
                         'status' => 'applied',
                         'applied_at' => time(),
                         'tstamp' => time(),
                     ],
                     ['uid' => $recommendationUid],
                     [
+                        'page_uid' => Connection::PARAM_INT,
                         'applied_at' => Connection::PARAM_INT,
                         'tstamp' => Connection::PARAM_INT,
                     ]
@@ -99,5 +104,79 @@ final class RecommendationApplyService
         }
 
         return $recommendation;
+    }
+
+    private function resolvePageUidFromUrl(string $url): int
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($path)) {
+            return 0;
+        }
+
+        $path = trim(rawurldecode($path));
+        if ($path === '') {
+            return 0;
+        }
+
+        $path = '/' . trim($path, '/');
+        $exactSlugs = array_values(array_unique([
+            $path,
+            rtrim($path, '/') ?: '/',
+            rtrim($path, '/') . '/',
+        ]));
+
+        $connection = $this->connectionPool->getConnectionForTable('pages');
+        $columns = $connection->getSchemaInformation()->listTableColumnNames('pages');
+        if (!in_array('slug', $columns, true)) {
+            return 0;
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $queryBuilder
+            ->select('uid')
+            ->from('pages')
+            ->where($queryBuilder->expr()->in('slug', ':slugs'))
+            ->setParameter('slugs', $exactSlugs, Connection::PARAM_STR_ARRAY)
+            ->setMaxResults(1);
+        $this->addPageVisibilityRestrictions($queryBuilder, $columns);
+
+        $pageUid = (int)$queryBuilder->executeQuery()->fetchOne();
+        if ($pageUid > 0) {
+            return $pageUid;
+        }
+
+        $lastSegment = trim((string)basename($path), '/');
+        if ($lastSegment === '') {
+            return 0;
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $queryBuilder
+            ->select('uid')
+            ->from('pages')
+            ->where($queryBuilder->expr()->like('slug', ':slugSuffix'))
+            ->setParameter('slugSuffix', '%/' . $lastSegment);
+        $this->addPageVisibilityRestrictions($queryBuilder, $columns);
+
+        $matches = $queryBuilder->executeQuery()->fetchFirstColumn();
+        $matches = array_values(array_filter(array_map('intval', $matches)));
+
+        return count($matches) === 1 ? $matches[0] : 0;
+    }
+
+    /**
+     * @param list<string> $columns
+     */
+    private function addPageVisibilityRestrictions($queryBuilder, array $columns): void
+    {
+        if (in_array('deleted', $columns, true)) {
+            $queryBuilder->andWhere('deleted = 0');
+        }
+        if (in_array('hidden', $columns, true)) {
+            $queryBuilder->andWhere('hidden = 0');
+        }
+        if (in_array('sys_language_uid', $columns, true)) {
+            $queryBuilder->andWhere('sys_language_uid = 0');
+        }
     }
 }
