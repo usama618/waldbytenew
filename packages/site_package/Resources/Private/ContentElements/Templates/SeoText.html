@@ -2,7 +2,14 @@
     <section class="seo-section">
         <div class="wrap">
             <f:if condition="{data.header}">
-                <h2 class="reveal d1">{data.header}</h2>
+                <f:if condition="{data.header_layout} == 1">
+                    <f:then>
+                        <h1 class="reveal d1">{data.header}</h1>
+                    </f:then>
+                    <f:else>
+                        <h2 class="reveal d1">{data.header}</h2>
+                    </f:else>
+                </f:if>
             </f:if>
             <f:if condition="{data.bodytext}">
                 <div class="seotext reveal d2"><f:format.html>{data.bodytext}</f:format.html></div>

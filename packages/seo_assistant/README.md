@@ -54,19 +54,34 @@ When OpenAI is configured, `seo:recommendations:generate` uses AI-first generati
 
 AI generation stores compact run memory in the database and keeps the latest 10 runs. Each new AI run receives those summaries as context so it can avoid repeating the same work.
 
-Recommendations are stored as drafts with a typed action payload. Only recommendations marked with
-`apply_capability=safe_metadata` are written automatically; content, internal link, image alt,
-structured data and technical indexing actions stay manual review items.
+Recommendations are stored as drafts with a typed action payload. Rows marked with
+`apply_capability=safe_metadata` update page metadata. Rows marked with
+`apply_capability=content_draft` can create a TYPO3 `tt_content` element, using the site's
+`seo_text` CType by default. Internal link, image alt, structured data and technical indexing
+actions still stay manual review items.
 
-Applying a safe metadata recommendation is intentionally explicit:
+Applying a recommendation is intentionally explicit:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
-Only `pages.seo_title` and `pages.description` are updated by the apply command. The command records
-the applied field values and marks verification as pending. After applying, refresh the rendered
-snapshot and verify that the frontend HTML contains the change:
+Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
+recommendations create a hidden `seo_text` element by default:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
+```
+
+To publish the created content immediately, pass `--publish-content`. Publishing requires an
+AI-generated `content_body_html` payload unless `--force` is also passed:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes --publish-content
+```
+
+The command records the applied field values or inserted content UID. After applying metadata,
+refresh the rendered snapshot and verify that the frontend HTML contains the change:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh

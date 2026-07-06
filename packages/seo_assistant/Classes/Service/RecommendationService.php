@@ -459,6 +459,8 @@ final class RecommendationService
             'seo_title' => mb_substr(trim((string)($payload['seo_title'] ?? $proposedTitle)), 0, 60),
             'description' => mb_substr(trim((string)($payload['description'] ?? $proposedDescription)), 0, 155),
             'content_brief' => mb_substr(trim((string)($payload['content_brief'] ?? '')), 0, 1800),
+            'content_element_header' => mb_substr(trim((string)($payload['content_element_header'] ?? '')), 0, 120),
+            'content_body_html' => mb_substr(trim((string)($payload['content_body_html'] ?? '')), 0, 5000),
             'suggested_headings' => $this->normalizeStringList($payload['suggested_headings'] ?? [], 8, 120),
             'suggested_links' => $this->normalizeSuggestionRows($payload['suggested_links'] ?? [], ['source_url', 'target_url', 'anchor_text', 'reason'], 8),
             'image_alt_suggestions' => $this->normalizeSuggestionRows($payload['image_alt_suggestions'] ?? [], ['src', 'alt_text', 'reason'], 12),
@@ -538,6 +540,17 @@ final class RecommendationService
             && ((string)($payload['seo_title'] ?? '') !== '' || (string)($payload['description'] ?? '') !== '')
         ) {
             return 'safe_metadata';
+        }
+
+        if (
+            $actionType === 'content_gap_brief'
+            && (
+                (string)($payload['content_body_html'] ?? '') !== ''
+                || (string)($payload['content_brief'] ?? '') !== ''
+                || ($payload['suggested_headings'] ?? []) !== []
+            )
+        ) {
+            return 'content_draft';
         }
 
         return 'manual';
@@ -640,6 +653,8 @@ final class RecommendationService
             'seo_title' => '',
             'description' => '',
             'content_brief' => $this->buildContentBrief($query, $type, $position, $impressions, $ctr),
+            'content_element_header' => '',
+            'content_body_html' => '',
             'suggested_headings' => $this->buildSuggestedHeadings($query),
             'suggested_links' => [],
             'image_alt_suggestions' => [],
@@ -953,6 +968,8 @@ final class RecommendationService
             'seo_title' => $proposedTitle,
             'description' => $proposedDescription,
             'content_brief' => '',
+            'content_element_header' => '',
+            'content_body_html' => '',
             'suggested_headings' => [],
             'suggested_links' => [],
             'image_alt_suggestions' => [],
@@ -969,6 +986,7 @@ final class RecommendationService
             };
             $title = trim((string)($renderedSnapshot['html_title'] ?? ''));
             $payload['suggested_headings'] = $title !== '' ? [$this->shortenMetadata($title, 90)] : [];
+            $payload['content_element_header'] = $payload['suggested_headings'][0] ?? '';
         }
 
         if ($actionType === 'image_alt_suggestion') {

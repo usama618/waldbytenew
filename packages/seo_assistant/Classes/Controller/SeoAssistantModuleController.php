@@ -422,6 +422,11 @@ final class SeoAssistantModuleController
      */
     private function renderRecommendationRow(array $row): string
     {
+        $payload = json_decode((string)($row['action_payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
         $metadata = '';
         if ((string)($row['proposed_seo_title'] ?? '') !== '') {
             $metadata .= '<strong>Title:</strong> ' . $this->escape((string)$row['proposed_seo_title']) . '<br>';
@@ -429,18 +434,58 @@ final class SeoAssistantModuleController
         if ((string)($row['proposed_description'] ?? '') !== '') {
             $metadata .= '<strong>Description:</strong> ' . $this->escape((string)$row['proposed_description']);
         }
+        if (
+            $metadata === ''
+            && (
+                (string)($payload['content_element_header'] ?? '') !== ''
+                || (string)($payload['content_body_html'] ?? '') !== ''
+                || (string)($payload['content_brief'] ?? '') !== ''
+                || ($payload['suggested_headings'] ?? []) !== []
+            )
+        ) {
+            $contentHeader = (string)($payload['content_element_header'] ?? '');
+            if ($contentHeader === '' && is_array($payload['suggested_headings'] ?? null)) {
+                $contentHeader = (string)($payload['suggested_headings'][0] ?? '');
+            }
+            $contentPreview = (string)($payload['content_body_html'] ?? '');
+            if ($contentPreview === '') {
+                $contentPreview = (string)($payload['content_brief'] ?? '');
+            }
+            $metadata = '<strong>Content:</strong> ' . $this->escape($contentHeader !== '' ? $contentHeader : 'Hidden draft')
+                . '<br><span class="muted">' . $this->escape($this->shorten($this->cleanPreviewText($contentPreview), 120)) . '</span>';
+        }
         if ($metadata === '') {
             $metadata = '<span class="muted">Manual review</span>';
         }
 
         $legacySafeMetadata = (string)($row['action_type'] ?? '') === ''
             && ((string)($row['proposed_seo_title'] ?? '') !== '' || (string)($row['proposed_description'] ?? '') !== '');
-        $applyCommand = ((string)($row['apply_capability'] ?? '') === 'safe_metadata' || $legacySafeMetadata)
-            ? 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes'
-            : 'Manual content/template change';
-        $verificationCommand = (string)($row['status'] ?? '') === 'applied'
-            ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
-            : 'Apply first';
+        $applyCapability = (string)($row['apply_capability'] ?? '');
+        if (
+            ($applyCapability === '' || $applyCapability === 'manual')
+            && (string)($row['action_type'] ?? '') === 'content_gap_brief'
+            && (
+                (string)($payload['content_body_html'] ?? '') !== ''
+                || (string)($payload['content_brief'] ?? '') !== ''
+                || ($payload['suggested_headings'] ?? []) !== []
+            )
+        ) {
+            $applyCapability = 'content_draft';
+        }
+        if ($applyCapability === 'safe_metadata' || $legacySafeMetadata) {
+            $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
+            $secondCommand = (string)($row['status'] ?? '') === 'applied'
+                ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
+                : 'Apply first';
+        } elseif ($applyCapability === 'content_draft') {
+            $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
+            $secondCommand = 'Publish directly: vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes --publish-content';
+        } else {
+            $applyCommand = 'Manual content/template change';
+            $secondCommand = (string)($row['status'] ?? '') === 'applied'
+                ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
+                : 'Apply first';
+        }
 
         return '<tr>'
             . '<td>' . (int)($row['uid'] ?? 0) . '</td>'
@@ -454,7 +499,7 @@ final class SeoAssistantModuleController
             . '<td>' . nl2br($this->escape((string)($row['recommendation'] ?? ''))) . '</td>'
             . '<td>' . $metadata . '</td>'
             . '<td><span class="pill">' . $this->escape((string)($row['verification_status'] ?? 'not_checked')) . '</span></td>'
-            . '<td><code>' . $this->escape($applyCommand) . '</code><br><code>' . $this->escape($verificationCommand) . '</code></td>'
+            . '<td><code>' . $this->escape($applyCommand) . '</code><br><code>' . $this->escape($secondCommand) . '</code></td>'
             . '</tr>';
     }
 
@@ -477,9 +522,22 @@ final class SeoAssistantModuleController
         if (!is_array($payload)) {
             $payload = [];
         }
+        if (
+            ($capability === '' || $capability === 'manual')
+            && $actionType === 'content_gap_brief'
+            && (
+                (string)($payload['content_body_html'] ?? '') !== ''
+                || (string)($payload['content_brief'] ?? '') !== ''
+                || ($payload['suggested_headings'] ?? []) !== []
+            )
+        ) {
+            $capability = 'content_draft';
+        }
 
         $details = '';
-        if ((string)($payload['content_brief'] ?? '') !== '') {
+        if ((string)($payload['content_element_header'] ?? '') !== '') {
+            $details = '<br><span class="muted">' . $this->escape($this->shorten((string)$payload['content_element_header'], 120)) . '</span>';
+        } elseif ((string)($payload['content_brief'] ?? '') !== '') {
             $details = '<br><span class="muted">' . $this->escape($this->shorten((string)$payload['content_brief'], 120)) . '</span>';
         } elseif ((string)($payload['structured_data_type'] ?? '') !== '') {
             $details = '<br><span class="muted">Schema: ' . $this->escape((string)$payload['structured_data_type']) . '</span>';
@@ -565,6 +623,14 @@ final class SeoAssistantModuleController
         }
 
         return rtrim(mb_substr($value, 0, max(0, $limit - 1))) . '...';
+    }
+
+    private function cleanPreviewText(string $value): string
+    {
+        $value = html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
+        return trim($value);
     }
 
     private function formatDate(int $timestamp): string

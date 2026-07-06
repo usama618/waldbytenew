@@ -21,7 +21,7 @@ $GLOBALS['TCA']['tt_content']['ctrl']['typeicon_classes']['seo_text'] = 'content
 $GLOBALS['TCA']['tt_content']['types']['seo_text'] = [
     'showitem' => '
         --div--;General,
-            CType, header, bodytext,
+            CType, header, header_layout, bodytext,
         --div--;Language,
             --palette--;;language,
         --div--;Access,

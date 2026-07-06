@@ -65,7 +65,9 @@ final class OpenAiRecommendationService
                             'Keine erfundenen Leistungsversprechen, keine Rankings garantieren.',
                             'Meta Titles maximal 60 Zeichen, Meta Descriptions maximal 155 Zeichen.',
                             'Nutze action_type metadata_update nur, wenn pages.seo_title oder pages.description sicher aktualisiert werden koennen.',
-                            'Nutze fuer Inhalte, Links, Bilder, Schema und technische Themen eine manuelle action_type mit konkretem Payload.',
+                            'Nutze fuer Inhalte, Links, Bilder, Schema und technische Themen eine passende action_type mit konkretem Payload.',
+                            'Bei content_gap_brief liefere content_element_header und content_body_html als direkt nutzbaren deutschen TYPO3-Richtext-Entwurf mit 120 bis 220 Woertern.',
+                            'content_body_html darf nur p, ul, ol, li, strong, em und br Tags enthalten, keine h-Tags, keine Links, kein Markdown.',
                             'Schreibe auf Deutsch, passend fuer WALDBYTE und die Region Karlsruhe, wenn lokal relevant.',
                         ]),
                         'input' => [
@@ -122,7 +124,7 @@ final class OpenAiRecommendationService
                                                             'technical_indexing_issue',
                                                             'manual_review',
                                                         ],
-                                                        'description' => 'Machine-applicable action category. Only metadata_update may be applied automatically.',
+                                                        'description' => 'Machine-applicable action category. metadata_update updates page metadata; content_gap_brief can create a tt_content draft.',
                                                     ],
                                                     'action_payload' => [
                                                         'type' => 'object',
@@ -133,6 +135,8 @@ final class OpenAiRecommendationService
                                                             'seo_title',
                                                             'description',
                                                             'content_brief',
+                                                            'content_element_header',
+                                                            'content_body_html',
                                                             'suggested_headings',
                                                             'suggested_links',
                                                             'image_alt_suggestions',
@@ -160,6 +164,14 @@ final class OpenAiRecommendationService
                                                             'content_brief' => [
                                                                 'type' => 'string',
                                                                 'description' => 'Concrete content gap or editor brief. Empty string if not relevant.',
+                                                            ],
+                                                            'content_element_header' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Ready-to-use content element header for content_gap_brief. Empty string otherwise.',
+                                                            ],
+                                                            'content_body_html' => [
+                                                                'type' => 'string',
+                                                                'description' => 'Ready-to-use TYPO3 richtext body HTML for content_gap_brief. Only p, ul, ol, li, strong, em, br tags. Empty string otherwise.',
                                                             ],
                                                             'suggested_headings' => [
                                                                 'type' => 'array',
@@ -241,7 +253,7 @@ final class OpenAiRecommendationService
                             ],
                             'verbosity' => 'low',
                         ],
-                        'max_output_tokens' => 2600,
+                        'max_output_tokens' => 3600,
                     ],
                     'timeout' => 45,
                 ]
@@ -331,6 +343,8 @@ final class OpenAiRecommendationService
             'seo_title' => mb_substr(trim((string)($payload['seo_title'] ?? $proposedTitle)), 0, 60),
             'description' => mb_substr(trim((string)($payload['description'] ?? $proposedDescription)), 0, 155),
             'content_brief' => mb_substr(trim((string)($payload['content_brief'] ?? '')), 0, 1800),
+            'content_element_header' => mb_substr(trim((string)($payload['content_element_header'] ?? '')), 0, 120),
+            'content_body_html' => mb_substr(trim((string)($payload['content_body_html'] ?? '')), 0, 5000),
             'suggested_headings' => $this->normalizeStringList($payload['suggested_headings'] ?? [], 8, 120),
             'suggested_links' => $this->normalizeLinkSuggestions($payload['suggested_links'] ?? []),
             'image_alt_suggestions' => $this->normalizeImageAltSuggestions($payload['image_alt_suggestions'] ?? []),
@@ -463,7 +477,14 @@ final class OpenAiRecommendationService
         if ($actionType === '' && ($proposedTitle !== '' || $proposedDescription !== '' || (string)($payload['seo_title'] ?? '') !== '' || (string)($payload['description'] ?? '') !== '')) {
             return 'metadata_update';
         }
-        if ($actionType === '' && (string)($payload['content_brief'] ?? '') !== '') {
+        if (
+            $actionType === ''
+            && (
+                (string)($payload['content_body_html'] ?? '') !== ''
+                || (string)($payload['content_element_header'] ?? '') !== ''
+                || (string)($payload['content_brief'] ?? '') !== ''
+            )
+        ) {
             return 'content_gap_brief';
         }
         if ($actionType === '' && ($payload['suggested_links'] ?? []) !== []) {

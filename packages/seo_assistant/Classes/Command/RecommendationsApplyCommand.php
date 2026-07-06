@@ -13,9 +13,11 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Throwable;
 
-#[AsCommand(name: 'seo:recommendations:apply', description: 'Apply one selected SEO recommendation to page metadata.')]
+#[AsCommand(name: 'seo:recommendations:apply', description: 'Apply one selected SEO recommendation to page metadata or content.')]
 final class RecommendationsApplyCommand extends Command
 {
+    protected static $defaultDescription = 'Apply one selected SEO recommendation to page metadata or content.';
+
     public function __construct(
         private readonly RecommendationApplyService $recommendationApplyService,
     ) {
@@ -25,9 +27,12 @@ final class RecommendationsApplyCommand extends Command
     protected function configure(): void
     {
         $this
+            ->setDescription('Apply one selected SEO recommendation to page metadata or content.')
             ->addOption('uid', null, InputOption::VALUE_REQUIRED, 'Recommendation uid to apply.')
-            ->addOption('yes', null, InputOption::VALUE_NONE, 'Actually write the page metadata. Without this option, the command is a dry run.')
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Allow applying non-draft/non-approved recommendations.');
+            ->addOption('yes', null, InputOption::VALUE_NONE, 'Actually write the change. Without this option, the command is a dry run.')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Allow applying non-draft/non-approved recommendations or publishing fallback content.')
+            ->addOption('publish-content', null, InputOption::VALUE_NONE, 'Publish created content elements immediately. Without this option, content is created hidden.')
+            ->addOption('content-ctype', null, InputOption::VALUE_REQUIRED, 'CType to use for content-gap recommendations.', 'seo_text');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -44,6 +49,8 @@ final class RecommendationsApplyCommand extends Command
                 $uid,
                 !(bool)$input->getOption('yes'),
                 (bool)$input->getOption('force'),
+                (bool)$input->getOption('publish-content'),
+                (string)$input->getOption('content-ctype'),
             );
         } catch (Throwable $exception) {
             $io->error($exception->getMessage());
@@ -59,10 +66,13 @@ final class RecommendationsApplyCommand extends Command
             ['Changed fields' => implode(', ', $result['changedFields'])],
             ['SEO title' => $result['seoTitle']],
             ['Description' => $result['description']],
+            ['Content UID' => $result['contentUid'] > 0 ? (string)$result['contentUid'] : '-'],
+            ['Content status' => $result['contentHeader'] !== '' ? ($result['contentHidden'] ? 'hidden draft' : 'published') : '-'],
+            ['Content header' => $result['contentHeader'] !== '' ? $result['contentHeader'] : '-'],
         );
 
         if ($result['dryRun']) {
-            $io->note('Run again with --yes to write the safe metadata update and mark verification as pending.');
+            $io->note('Run again with --yes to write the change. Content recommendations create hidden elements unless --publish-content is also passed.');
         }
 
         return Command::SUCCESS;

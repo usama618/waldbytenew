@@ -36,13 +36,15 @@ AI runs keep compact memory in the database. The extension stores the latest 10 
 Recommendations now include typed action metadata:
 
 - `metadata_update`: safe apply candidate for `pages.seo_title` and/or `pages.description`
-- `content_gap_brief`: editor brief for missing/weak page content
+- `content_gap_brief`: applyable content draft for missing/weak page content
 - `internal_link_suggestion`: manual internal-link direction
 - `image_alt_suggestion`: manual image alt review
 - `structured_data_suggestion`: schema idea for implementation through the site package renderer
 - `technical_indexing_issue`: routing, robots, canonical or HTTP issue requiring manual review
 
-Only `metadata_update` rows with `apply_capability=safe_metadata` can be applied automatically.
+`metadata_update` rows with `apply_capability=safe_metadata` can be applied automatically.
+`content_gap_brief` rows with `apply_capability=content_draft` can create a TYPO3 content element
+automatically, using the site package `seo_text` CType by default.
 
 ## First run
 
@@ -96,19 +98,35 @@ vendor/bin/typo3 seo:gsc:analyze-trends --sync \
   --current-start=2026-06-08 --current-end=2026-07-05
 ```
 
-## Safe apply flow
+## Apply flow
 
-Applying is per recommendation and only changes `pages.seo_title` plus `pages.description`:
+Applying is per recommendation. The first command is always a dry run:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:apply --uid=123
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
-The first command is a dry run. The second command writes safe metadata only, records the applied
-field values, and sets verification to pending.
+For metadata recommendations, the second command writes `pages.seo_title` and/or
+`pages.description`, records the applied field values, and sets verification to pending.
 
-After applying, verify against the rendered frontend output:
+For content-gap recommendations, the second command creates a hidden `tt_content` element:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
+```
+
+To publish the new content immediately:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes --publish-content
+```
+
+Publishing requires AI-generated `content_body_html`. Older/rule-based recommendations can still
+create hidden drafts; use `--force --publish-content` only if you intentionally want to publish the
+fallback draft body.
+
+After applying metadata, verify against the rendered frontend output:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh
