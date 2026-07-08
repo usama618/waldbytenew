@@ -27,11 +27,23 @@ SEO_ASSISTANT_GOOGLE_REFRESH_TOKEN='...'
 SEO_ASSISTANT_BASE_URL='https://waldbyte.de/'
 SEO_ASSISTANT_OPENAI_API_KEY='...'
 SEO_ASSISTANT_OPENAI_MODEL='...'
+SEO_ASSISTANT_OPENAI_INPUT_COST_PER_MILLION='0.00'
+SEO_ASSISTANT_OPENAI_OUTPUT_COST_PER_MILLION='0.00'
 ```
 
 AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` and `SEO_ASSISTANT_OPENAI_MODEL` are configured, recommendation generation is AI-first. The rule-based generator is only used when AI is disabled, not configured, or returns no usable recommendation.
 
 AI runs keep compact memory in the database. The extension stores the latest 10 AI generation runs and sends those summaries into the next AI run as context.
+
+Every OpenAI API call is also logged in `tx_seoassistant_ai_call` with run type, model,
+success/failure status, input/output/total tokens, duration and an estimated USD cost. The backend
+module shows current-month usage and recent calls. Cost is an estimate based on the extension's
+local model price map; unknown models still log tokens but show a zero-dollar estimate until the map
+is updated.
+
+Impact evaluations are fed back into future AI recommendation prompts. Recent improved, neutral,
+declined and no-data outcomes are summarized with the action type and metric deltas so future
+recommendations can favor patterns that worked and avoid repeating weak patterns.
 
 Each AI run can also be exported from `Web > SEO Assistant` with the `Download suggestions`
 button. The downloaded Markdown document contains the run summary, analyzed pages, matching
@@ -131,10 +143,21 @@ File/template changes are reported as skipped. Content recommendations create hi
 The backend module `Web > SEO Assistant` has the same behavior, but the buttons are optimized for
 one-click use: every automatic recommendation has an `Apply` button, and the recommendations table
 has an `Apply all automatic` button. Every row also has a `Reject` button. Rejected rows are marked
-`dismissed`, hidden from the table, and excluded from `Apply all automatic`. Backend apply publishes generated content sections directly.
+`rejected`, hidden from the table, and excluded from `Apply all automatic`. Backend apply publishes generated content sections directly.
 It can also convert older `manual_review` rows when they are database-backed, such as long title,
 long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
 and dynamic structured-data rows.
+
+Recommendation lifecycle statuses are:
+
+- `draft`: generated but not applied
+- `approved`: explicitly approved and still applyable
+- `applied`: database-backed change was written and awaits verification/evaluation
+- `verified`: the rendered frontend or current CMS state matches the recommendation
+- `evaluating`: impact is still early or has insufficient data
+- `improved`, `neutral`, `declined`: impact evaluation result
+- `rejected`: manually rejected
+- `rolled_back`: reserved for rollback support
 
 Every write run from the backend or CLI is stored in `tx_seoassistant_apply_history`. The backend
 module shows the latest history entries and each row has a `Download history` button. The exported
@@ -187,16 +210,30 @@ data exists:
 vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
 ```
 
-Defaults:
+Default stage:
 
-- minimum age: 35 days after apply
-- before window: 28 days before apply
-- buffer: first 7 days after apply are ignored
-- after window: 28 days after the buffer
+- `first`: 35-day first evaluation, comparing 28 days before apply with 28 days after a 7-day buffer
+
+Additional stages:
+
+- `early`: 14-day early signal, comparing 7 days before apply with 7 days after a 7-day buffer
+- `stronger`: 63-day stronger evaluation, comparing 56 days before apply with 56 days after a 7-day buffer
+- `final`: 90-day final evaluation, comparing 83 days before apply with 83 days after a 7-day buffer
+
+Examples:
+
+```bash
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=early
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=first
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=stronger
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=final
+```
 
 The command stores exact dates, clicks, impressions, CTR, average position, rule-based impact and
-optional OpenAI analysis in `tx_seoassistant_impact_evaluation`. If the after-window is not complete
-yet, the recommendation stays pending. If impressions are too low, the result is `not_enough_data`
+optional OpenAI analysis in `tx_seoassistant_impact_evaluation`. Each stored row has an
+`evaluation_stage`, so early results are visible as early signals and never confused with final
+results. If the after-window is not complete yet, the recommendation stays pending. If impressions
+are too low, the result is `not_enough_data` and the recommendation status stays `evaluating`
 instead of a premature success/failure judgment.
 
 The recommendation table hides rows that are already implemented. The check uses TYPO3 page
@@ -208,7 +245,8 @@ Dynamic structured data is stored in `tx_seoassistant_structured_data` and rende
 site-package JSON-LD renderer. After deploying a version that adds this table, run TYPO3 extension
 setup/database analysis once on the target environment. The same setup step creates
 `tx_seoassistant_apply_history` for downloadable apply history and
-`tx_seoassistant_impact_evaluation` for delayed impact checks.
+`tx_seoassistant_ai_call` for token/cost logging and `tx_seoassistant_impact_evaluation` for
+stage-based impact checks.
 
 ## Suggested cron
 
@@ -222,7 +260,10 @@ vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5
 vendor/bin/typo3 seo:recommendations:verify --all
-vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=early
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=first
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=stronger
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=final
 ```
 
 The rendered snapshot command crawls only the configured same-host URLs. It uses CMS page snapshots and Search Console page URLs as its source list.

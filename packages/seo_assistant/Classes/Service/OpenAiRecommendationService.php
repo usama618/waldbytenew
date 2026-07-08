@@ -12,6 +12,7 @@ final class OpenAiRecommendationService
     public function __construct(
         private readonly ConfigurationService $configuration,
         private readonly RequestFactory $requestFactory,
+        private readonly AiUsageLogService $aiUsageLogService,
     ) {}
 
     public function isConfigured(): bool
@@ -44,6 +45,7 @@ final class OpenAiRecommendationService
             return null;
         }
 
+        $startedAt = microtime(true);
         try {
             $response = $this->requestFactory->request(
                 $this->configuration->getOpenAiResponsesUrl(),
@@ -113,8 +115,10 @@ final class OpenAiRecommendationService
 
             $payload = json_decode((string)$response->getBody(), true);
             if (!is_array($payload)) {
+                $this->recordAiCall('impact_evaluation', $context, null, 'failed', $startedAt, 'OpenAI response was not valid JSON.');
                 return null;
             }
+            $this->recordAiCall('impact_evaluation', $context, $payload, 'success', $startedAt);
 
             $outputText = $this->extractOutputText($payload);
             if ($outputText === '') {
@@ -127,7 +131,8 @@ final class OpenAiRecommendationService
             }
 
             return $this->normalizeImpactEvaluation($data);
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            $this->recordAiCall('impact_evaluation', $context, null, 'failed', $startedAt, $exception->getMessage());
             return null;
         }
     }
@@ -142,6 +147,7 @@ final class OpenAiRecommendationService
             return [];
         }
 
+        $startedAt = microtime(true);
         try {
             $response = $this->requestFactory->request(
                 $this->configuration->getOpenAiResponsesUrl(),
@@ -359,8 +365,10 @@ final class OpenAiRecommendationService
 
             $payload = json_decode((string)$response->getBody(), true);
             if (!is_array($payload)) {
+                $this->recordAiCall('recommendation_generation', $context, null, 'failed', $startedAt, 'OpenAI response was not valid JSON.');
                 return [];
             }
+            $this->recordAiCall('recommendation_generation', $context, $payload, 'success', $startedAt);
 
             $outputText = $this->extractOutputText($payload);
             if ($outputText === '') {
@@ -373,9 +381,48 @@ final class OpenAiRecommendationService
             }
 
             return $this->normalizeRecommendations($payload['recommendations'] ?? [], $maxRecommendations);
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            $this->recordAiCall('recommendation_generation', $context, null, 'failed', $startedAt, $exception->getMessage());
             return [];
         }
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     * @param array<string,mixed>|null $payload
+     */
+    private function recordAiCall(
+        string $runType,
+        array $context,
+        ?array $payload,
+        string $status,
+        float $startedAt,
+        string $errorMessage = '',
+    ): void {
+        try {
+            $usage = $payload['usage'] ?? null;
+            $this->aiUsageLogService->recordCall(
+                $runType,
+                $this->configuration->getOpenAiModel(),
+                $status,
+                is_array($usage) ? $usage : null,
+                $startedAt,
+                $this->requestHash($runType, $context),
+                $context,
+                (string)($payload['id'] ?? ''),
+                $errorMessage
+            );
+        } catch (Throwable) {
+            // Usage logging must never break recommendation generation.
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     */
+    private function requestHash(string $runType, array $context): string
+    {
+        return hash('sha256', $runType . '|' . $this->configuration->getOpenAiModel() . '|' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     /**

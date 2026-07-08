@@ -370,15 +370,20 @@ final class RecommendationVerificationService
      */
     private function storeVerification(int $recommendationUid, array $result): void
     {
+        $data = [
+            'verification_status' => (string)($result['status'] ?? 'needs_review'),
+            'verification_json' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'verified_at' => time(),
+            'tstamp' => time(),
+        ];
+        if ((string)($result['status'] ?? '') === 'verified') {
+            $data['status'] = 'verified';
+        }
+
         $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
             ->update(
                 self::RECOMMENDATION_TABLE,
-                [
-                    'verification_status' => (string)($result['status'] ?? 'needs_review'),
-                    'verification_json' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                    'verified_at' => time(),
-                    'tstamp' => time(),
-                ],
+                $data,
                 ['uid' => $recommendationUid],
                 [
                     'verified_at' => Connection::PARAM_INT,

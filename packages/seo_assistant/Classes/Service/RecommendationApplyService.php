@@ -208,7 +208,7 @@ final class RecommendationApplyService
             ->update(
                 self::RECOMMENDATION_TABLE,
                 [
-                    'status' => 'dismissed',
+                    'status' => 'rejected',
                     'verification_status' => 'rejected',
                     'verification_json' => $this->json([
                         'status' => 'rejected',
@@ -223,7 +223,7 @@ final class RecommendationApplyService
 
         return [
             'uid' => $recommendationUid,
-            'status' => 'dismissed',
+            'status' => 'rejected',
         ];
     }
 
@@ -363,7 +363,7 @@ final class RecommendationApplyService
         if ($force) {
             $queryBuilder
                 ->where($queryBuilder->expr()->notIn('status', ':excludedStatuses'))
-                ->setParameter('excludedStatuses', ['applied', 'implemented', 'dismissed'], Connection::PARAM_STR_ARRAY);
+                ->setParameter('excludedStatuses', ['applied', 'verified', 'evaluating', 'improved', 'neutral', 'declined', 'rejected', 'rolled_back', 'implemented', 'dismissed'], Connection::PARAM_STR_ARRAY);
         } else {
             $queryBuilder
                 ->where($queryBuilder->expr()->in('status', ':statuses'))
@@ -616,7 +616,7 @@ final class RecommendationApplyService
                 self::RECOMMENDATION_TABLE,
                 [
                     'page_uid' => $pageUid,
-                    'status' => 'implemented',
+                    'status' => 'verified',
                     'verification_status' => 'verified',
                     'verification_json' => $this->json($implementedState),
                     'verified_at' => $now,

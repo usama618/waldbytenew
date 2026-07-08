@@ -177,6 +177,35 @@ CREATE TABLE tx_seoassistant_ai_run (
     KEY mode (mode)
 );
 
+CREATE TABLE tx_seoassistant_ai_call (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    run_type varchar(64) DEFAULT '' NOT NULL,
+    status varchar(32) DEFAULT '' NOT NULL,
+    model varchar(128) DEFAULT '' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    recommendation_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    input_tokens int(11) unsigned DEFAULT '0' NOT NULL,
+    output_tokens int(11) unsigned DEFAULT '0' NOT NULL,
+    total_tokens int(11) unsigned DEFAULT '0' NOT NULL,
+    estimated_cost_usd decimal(12,6) DEFAULT '0.000000' NOT NULL,
+    duration_ms int(11) unsigned DEFAULT '0' NOT NULL,
+    request_hash varchar(64) DEFAULT '' NOT NULL,
+    response_id varchar(128) DEFAULT '' NOT NULL,
+    error_message text,
+    usage_json mediumtext,
+
+    PRIMARY KEY (uid),
+    KEY crdate (crdate),
+    KEY run_type (run_type),
+    KEY status (status),
+    KEY model (model),
+    KEY page_url (page_url(191)),
+    KEY recommendation_uid (recommendation_uid)
+);
+
 CREATE TABLE tx_seoassistant_structured_data (
     uid int(11) unsigned NOT NULL auto_increment,
     pid int(11) DEFAULT '0' NOT NULL,
@@ -237,6 +266,7 @@ CREATE TABLE tx_seoassistant_impact_evaluation (
     after_to int(11) unsigned DEFAULT '0' NOT NULL,
     buffer_days int(11) unsigned DEFAULT '7' NOT NULL,
     window_days int(11) unsigned DEFAULT '28' NOT NULL,
+    evaluation_stage varchar(32) DEFAULT '' NOT NULL,
     before_clicks double DEFAULT '0' NOT NULL,
     before_impressions double DEFAULT '0' NOT NULL,
     before_ctr double DEFAULT '0' NOT NULL,
@@ -264,5 +294,6 @@ CREATE TABLE tx_seoassistant_impact_evaluation (
     KEY page_url (page_url(191)),
     KEY query_text (query_text(191)),
     KEY applied_at (applied_at),
+    KEY evaluation_stage (evaluation_stage),
     KEY impact_status (impact_status)
 );

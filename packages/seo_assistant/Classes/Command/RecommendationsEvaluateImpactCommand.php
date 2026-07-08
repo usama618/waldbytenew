@@ -26,6 +26,7 @@ final class RecommendationsEvaluateImpactCommand extends Command
     {
         $this
             ->addOption('min-age-days', null, InputOption::VALUE_REQUIRED, 'Minimum days after apply before evaluation.', '35')
+            ->addOption('stage', null, InputOption::VALUE_REQUIRED, 'Evaluation stage preset: early, first, stronger, final, or custom.', 'first')
             ->addOption('window-days', null, InputOption::VALUE_REQUIRED, 'Before/after comparison window length.', '28')
             ->addOption('buffer-days', null, InputOption::VALUE_REQUIRED, 'Days ignored after apply before the after-window starts.', '7')
             ->addOption('min-impressions', null, InputOption::VALUE_REQUIRED, 'Minimum impressions in either window before judging impact.', '20')
@@ -55,6 +56,7 @@ final class RecommendationsEvaluateImpactCommand extends Command
                 !(bool)$input->getOption('disable-ai') && !(bool)$input->getOption('dry-run'),
                 (bool)$input->getOption('force'),
                 (bool)$input->getOption('dry-run'),
+                (string)$input->getOption('stage'),
             );
         } catch (Throwable $exception) {
             $io->error($exception->getMessage());
@@ -76,6 +78,7 @@ final class RecommendationsEvaluateImpactCommand extends Command
                 (int)($row['uid'] ?? 0),
                 (string)($row['status'] ?? ''),
                 (string)($row['confidence'] ?? ''),
+                (string)($row['evaluationStage'] ?? ''),
                 (string)($row['appliedDate'] ?? ''),
                 (string)($row['before'] ?? ''),
                 (string)($row['after'] ?? ''),
@@ -84,7 +87,7 @@ final class RecommendationsEvaluateImpactCommand extends Command
             ];
         }
         if ($rows !== []) {
-            $io->table(['UID', 'Impact', 'Conf.', 'Applied', 'Before', 'After', 'Query', 'Summary'], $rows);
+            $io->table(['UID', 'Impact', 'Conf.', 'Stage', 'Applied', 'Before', 'After', 'Query', 'Summary'], $rows);
         }
 
         $io->success('SEO recommendation impact evaluation complete.');

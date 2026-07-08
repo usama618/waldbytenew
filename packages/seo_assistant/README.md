@@ -17,6 +17,7 @@ Environment variables are still supported and take precedence over backend confi
 - `SEO_ASSISTANT_BASE_URL`: public base URL used for page snapshots, for example `https://waldbyte.de/`
 - `SEO_ASSISTANT_OPENAI_API_KEY`: optional, enables AI-first recommendation generation
 - `SEO_ASSISTANT_OPENAI_MODEL`: optional but required for AI mode, for example the model you want to use with the OpenAI Responses API
+- `SEO_ASSISTANT_OPENAI_INPUT_COST_PER_MILLION` and `SEO_ASSISTANT_OPENAI_OUTPUT_COST_PER_MILLION`: optional USD overrides for cost estimates when your model is not in the local price map
 
 The backend configuration also contains default limits for rendered URL snapshots, minimum impressions, recommendation candidates, and AI page analyses.
 
@@ -55,6 +56,15 @@ When OpenAI is configured, `seo:recommendations:generate` uses AI-first generati
 
 AI generation stores compact run memory in the database and keeps the latest 10 runs. Each new AI run receives those summaries as context so it can avoid repeating the same work.
 
+Every OpenAI call is logged in `tx_seoassistant_ai_call` with run type, model, success/failure
+status, input/output tokens, total tokens, duration and an estimated USD cost. The backend module
+shows current-month AI usage and recent calls. Cost is an estimate from the extension's local model
+price map; unknown models still log tokens but show a zero-dollar estimate until pricing is mapped.
+
+Stored impact evaluations are also summarized into future AI recommendation prompts, so the
+assistant can learn from changes that improved, stayed neutral, declined, or did not have enough
+data.
+
 In the backend module, every AI memory run has a `Download suggestions` button. It downloads a
 Markdown document for that run with analyzed pages, AI recommendations, content drafts, metadata
 commands, image alt/link/schema suggestions, and local DDEV workflow notes. Use that file as the
@@ -88,11 +98,14 @@ passed. In the backend module, the Apply buttons publish generated content secti
 
 The backend module also shows an `Apply` button for every automatic recommendation and an
 `Apply all automatic` button above the table. Every row also has a `Reject` button. Rejected
-recommendations are marked `dismissed`, hidden from the table, and excluded from future bulk apply
+recommendations are marked `rejected`, hidden from the table, and excluded from future bulk apply
 runs. The buttons can also handle older `manual_review`
 rows when the extension can convert them safely from their recommendation type, for example long
 titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
 structured-data suggestions.
+
+Recommendation statuses are `draft`, `approved`, `applied`, `verified`, `evaluating`, `improved`,
+`neutral`, `declined`, `rejected`, and `rolled_back`.
 
 Every backend or CLI write run is recorded in `tx_seoassistant_apply_history`. The backend module
 shows the latest apply history entries with counts for applied, already implemented, skipped and
@@ -137,15 +150,21 @@ JSON-LD type is already present in the latest rendered snapshot.
 Applied recommendation impact can be evaluated after enough Search Console data exists:
 
 ```bash
-vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=first
 ```
 
-The default evaluation is intentionally delayed and conservative: it compares 28 days before the
-apply date with 28 days after a 7-day buffer, so a recommendation becomes eligible after at least
-35 days. The command stores clicks, impressions, CTR, average position, exact date windows, a
-rule-based status, and an optional OpenAI explanation in `tx_seoassistant_impact_evaluation`.
+Stage presets keep early signals separate from stronger/final evaluations:
+
+- `early`: 14-day early signal, 7-day window after a 7-day buffer
+- `first`: 35-day first evaluation, 28-day window after a 7-day buffer
+- `stronger`: 63-day stronger evaluation, 56-day window after a 7-day buffer
+- `final`: 90-day final evaluation, 83-day window after a 7-day buffer
+
+The command stores clicks, impressions, CTR, average position, exact date windows, the
+`evaluation_stage`, a rule-based status, and an optional OpenAI explanation in
+`tx_seoassistant_impact_evaluation`.
 Rows are shown in `Web > SEO Assistant` under `Impact Evaluations`.
 
 Structured-data recommendations are stored in `tx_seoassistant_structured_data` and rendered by the
 site package JSON-LD renderer. After deploying this feature, run TYPO3 extension setup/database
-analysis once so the structured-data, apply-history and impact-evaluation tables exist.
+analysis once so the structured-data, apply-history, AI-call and impact-evaluation tables exist.

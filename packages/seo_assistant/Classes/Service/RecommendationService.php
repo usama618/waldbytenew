@@ -13,6 +13,7 @@ final class RecommendationService
     private const SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
     private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
+    private const IMPACT_TABLE = 'tx_seoassistant_impact_evaluation';
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
@@ -36,7 +37,8 @@ final class RecommendationService
 
         if ($useAi && $this->openAiRecommendationService->isConfigured()) {
             $recentRuns = $this->aiRunHistoryService->getRecentRuns();
-            $aiResult = $this->generateAiFirstRecommendations($candidates, $snapshots, $renderedSnapshots, $aiLimit, $recentRuns);
+            $impactLearning = $this->fetchImpactLearningContext();
+            $aiResult = $this->generateAiFirstRecommendations($candidates, $snapshots, $renderedSnapshots, $aiLimit, $recentRuns, $impactLearning);
             $stored = $aiResult['stored'];
             $aiUsed = $aiResult['aiUsed'];
 
@@ -160,15 +162,16 @@ final class RecommendationService
      * @param array<string,array<string,mixed>> $snapshots
      * @param array<string,array<string,mixed>> $renderedSnapshots
      * @param list<array<string,mixed>> $recentRuns
+     * @param list<array<string,mixed>> $impactLearning
      * @return array{stored:int,aiUsed:int,generated:int}
      */
-    private function generateAiFirstRecommendations(array $candidates, array $snapshots, array $renderedSnapshots, int $aiLimit, array $recentRuns): array
+    private function generateAiFirstRecommendations(array $candidates, array $snapshots, array $renderedSnapshots, int $aiLimit, array $recentRuns, array $impactLearning): array
     {
         $stored = 0;
         $aiUsed = 0;
         $generated = 0;
         $storedRecommendations = [];
-        $contexts = $this->buildAiPageContexts($candidates, $snapshots, $renderedSnapshots, max(1, $aiLimit), $recentRuns);
+        $contexts = $this->buildAiPageContexts($candidates, $snapshots, $renderedSnapshots, max(1, $aiLimit), $recentRuns, $impactLearning);
 
         foreach ($contexts as $context) {
             $aiRecommendations = $this->openAiRecommendationService->createRecommendations($context, 4);
@@ -207,9 +210,10 @@ final class RecommendationService
      * @param array<string,array<string,mixed>> $snapshots
      * @param array<string,array<string,mixed>> $renderedSnapshots
      * @param list<array<string,mixed>> $recentRuns
+     * @param list<array<string,mixed>> $impactLearning
      * @return list<array<string,mixed>>
      */
-    private function buildAiPageContexts(array $candidates, array $snapshots, array $renderedSnapshots, int $limit, array $recentRuns): array
+    private function buildAiPageContexts(array $candidates, array $snapshots, array $renderedSnapshots, int $limit, array $recentRuns, array $impactLearning): array
     {
         $grouped = [];
         foreach ($candidates as $candidate) {
@@ -266,7 +270,8 @@ final class RecommendationService
                 'cms_page' => $this->buildCmsSnapshotContext($cmsSnapshot),
                 'rendered_page' => $this->buildRenderedSnapshotContext($renderedSnapshot),
                 'recent_ai_run_memory' => $recentRuns,
-                'instruction' => 'Find the highest impact SEO actions for this page. Prefer concrete metadata, content section, internal link, image alt, structured data, or technical indexing recommendations. Return no recommendation if no useful action exists.',
+                'impact_learning_memory' => $impactLearning,
+                'instruction' => 'Find the highest impact SEO actions for this page. Prefer concrete metadata, content section, internal link, image alt, structured data, or technical indexing recommendations. Use impact_learning_memory to avoid repeating declined/neutral patterns and to favor action types that previously improved comparable pages. Return no recommendation if no useful action exists.',
             ];
 
             if (count($contexts) >= $limit) {
@@ -350,6 +355,73 @@ final class RecommendationService
         }
 
         return $missing;
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function fetchImpactLearningContext(int $limit = 30): array
+    {
+        $rows = $this->connectionPool->getConnectionForTable(self::IMPACT_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::IMPACT_TABLE)
+            ->orderBy('crdate', 'DESC')
+            ->setMaxResults(max(1, min(100, $limit)))
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $learning = [];
+        foreach ($rows as $row) {
+            $evidence = json_decode((string)($row['evidence_json'] ?? '{}'), true);
+            $recommendation = [];
+            if (is_array($evidence)
+                && is_array($evidence['context'] ?? null)
+                && is_array($evidence['context']['recommendation'] ?? null)
+            ) {
+                $recommendation = $evidence['context']['recommendation'];
+            }
+
+            $learning[] = [
+                'evaluated_at' => date('Y-m-d', (int)($row['crdate'] ?? 0)),
+                'evaluation_stage' => (string)($row['evaluation_stage'] ?? '') !== ''
+                    ? (string)$row['evaluation_stage']
+                    : $this->evaluationStage((int)($row['window_days'] ?? 0), (int)($row['buffer_days'] ?? 0)),
+                'impact_status' => (string)($row['impact_status'] ?? ''),
+                'confidence' => (string)($row['confidence'] ?? ''),
+                'page_url' => (string)($row['page_url'] ?? ''),
+                'query' => (string)($row['query_text'] ?? ''),
+                'recommendation_type' => (string)($recommendation['type'] ?? ''),
+                'action_type' => (string)($recommendation['action_type'] ?? ''),
+                'apply_capability' => (string)($recommendation['apply_capability'] ?? ''),
+                'summary' => mb_substr(trim((string)($row['ai_summary'] ?? '')), 0, 320),
+                'next_action' => mb_substr(trim((string)($row['ai_next_action'] ?? '')), 0, 260),
+                'delta' => [
+                    'clicks' => (float)($row['clicks_delta'] ?? 0),
+                    'impressions' => (float)($row['impressions_delta'] ?? 0),
+                    'ctr' => (float)($row['ctr_delta'] ?? 0),
+                    'position' => (float)($row['position_delta'] ?? 0),
+                ],
+            ];
+        }
+
+        return $learning;
+    }
+
+    private function evaluationStage(int $windowDays, int $bufferDays): string
+    {
+        $totalDays = $windowDays + $bufferDays;
+        if ($totalDays <= 14) {
+            return 'early_signal_14d';
+        }
+        if ($totalDays <= 35) {
+            return 'first_evaluation_35d';
+        }
+        if ($totalDays <= 63) {
+            return 'stronger_evaluation_63d';
+        }
+
+        return 'final_evaluation_90d';
     }
 
     /**

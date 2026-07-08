@@ -39,10 +39,22 @@ final class RecommendationImpactEvaluationService
         bool $useAi = true,
         bool $force = false,
         bool $dryRun = false,
+        string $evaluationStage = '',
     ): array {
+        $evaluationStage = str_replace('-', '_', strtolower(trim($evaluationStage)));
+        $stagePreset = $this->evaluationStagePreset($evaluationStage);
+        if ($stagePreset !== null) {
+            $minAgeDays = $stagePreset['minAgeDays'];
+            $windowDays = $stagePreset['windowDays'];
+            $bufferDays = $stagePreset['bufferDays'];
+            $evaluationStage = $stagePreset['stage'];
+        } elseif ($evaluationStage !== '') {
+            $evaluationStage = '';
+        }
         $windowDays = max(7, min(90, $windowDays));
         $bufferDays = max(0, min(30, $bufferDays));
         $minAgeDays = max($bufferDays + $windowDays, $minAgeDays);
+        $evaluationStage = $evaluationStage !== '' ? $evaluationStage : $this->stageForPlan($windowDays, $bufferDays);
         $minImpressions = max(1, $minImpressions);
         $limit = max(1, min(500, $limit));
         $rowLimit = max(1, min(25000, $rowLimit));
@@ -57,7 +69,7 @@ final class RecommendationImpactEvaluationService
         $aiUsed = 0;
 
         foreach ($recommendations as $recommendation) {
-            $plan = $this->buildWindowPlan((int)($recommendation['applied_at'] ?? 0), $windowDays, $bufferDays);
+            $plan = $this->buildWindowPlan((int)($recommendation['applied_at'] ?? 0), $windowDays, $bufferDays, $evaluationStage);
             if ($plan['status'] === 'pending') {
                 $pending++;
                 $rows[] = $this->summaryRow($recommendation, 'pending', 'Waiting until after-window is complete.', $plan);
@@ -150,6 +162,106 @@ final class RecommendationImpactEvaluationService
     }
 
     /**
+     * @return array{stage:string,minAgeDays:int,windowDays:int,bufferDays:int}|null
+     */
+    private function evaluationStagePreset(string $stage): ?array
+    {
+        $stage = strtolower(trim($stage));
+        $stage = str_replace('-', '_', $stage);
+
+        return match ($stage) {
+            'early', 'early_signal', 'early_signal_14d' => [
+                'stage' => 'early_signal_14d',
+                'minAgeDays' => 14,
+                'windowDays' => 7,
+                'bufferDays' => 7,
+            ],
+            'first', 'first_evaluation', 'first_evaluation_35d' => [
+                'stage' => 'first_evaluation_35d',
+                'minAgeDays' => 35,
+                'windowDays' => 28,
+                'bufferDays' => 7,
+            ],
+            'stronger', 'stronger_evaluation', 'stronger_evaluation_63d' => [
+                'stage' => 'stronger_evaluation_63d',
+                'minAgeDays' => 63,
+                'windowDays' => 56,
+                'bufferDays' => 7,
+            ],
+            'final', 'final_evaluation', 'final_evaluation_90d' => [
+                'stage' => 'final_evaluation_90d',
+                'minAgeDays' => 90,
+                'windowDays' => 83,
+                'bufferDays' => 7,
+            ],
+            '', 'custom' => null,
+            default => null,
+        };
+    }
+
+    private function stageForPlan(int $windowDays, int $bufferDays): string
+    {
+        $totalDays = $windowDays + $bufferDays;
+        if ($totalDays <= 14) {
+            return 'early_signal_14d';
+        }
+        if ($totalDays <= 35) {
+            return 'first_evaluation_35d';
+        }
+        if ($totalDays <= 63) {
+            return 'stronger_evaluation_63d';
+        }
+
+        return 'final_evaluation_90d';
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{impact_status:string,confidence:string,summary:string,next_action:string} $final
+     * @param array<string,mixed> $plan
+     */
+    private function updateRecommendationStatusFromEvaluation(array $recommendation, array $final, array $plan, int $now): void
+    {
+        $uid = (int)($recommendation['uid'] ?? 0);
+        if ($uid <= 0) {
+            return;
+        }
+
+        $currentStatus = (string)($recommendation['status'] ?? '');
+        if (in_array($currentStatus, ['draft', 'approved', 'rejected', 'rolled_back'], true)) {
+            return;
+        }
+
+        $impactStatus = (string)($final['impact_status'] ?? '');
+        $stage = (string)($plan['evaluationStage'] ?? '');
+        $status = $this->recommendationStatusForEvaluation($impactStatus, $stage);
+
+        $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+            ->update(
+                self::RECOMMENDATION_TABLE,
+                [
+                    'status' => $status,
+                    'tstamp' => $now,
+                ],
+                ['uid' => $uid],
+                ['tstamp' => Connection::PARAM_INT]
+            );
+    }
+
+    private function recommendationStatusForEvaluation(string $impactStatus, string $stage): string
+    {
+        if ($stage === 'early_signal_14d' || $impactStatus === 'not_enough_data') {
+            return 'evaluating';
+        }
+
+        if (in_array($impactStatus, ['improved', 'neutral', 'declined'], true)) {
+            return $impactStatus;
+        }
+
+        return 'evaluating';
+    }
+
+    /**
      * @return list<array<string,mixed>>
      */
     private function fetchEligibleRecommendations(int $minAgeDays, int $limit): array
@@ -161,12 +273,12 @@ final class RecommendationImpactEvaluationService
         return $queryBuilder
             ->select('*')
             ->from(self::RECOMMENDATION_TABLE)
-            ->where('status = :status')
+            ->where($queryBuilder->expr()->in('status', ':statuses'))
             ->andWhere('applied_at > 0')
             ->andWhere('applied_at <= :cutoff')
             ->orderBy('applied_at', 'ASC')
             ->setMaxResults($limit)
-            ->setParameter('status', 'applied')
+            ->setParameter('statuses', ['applied', 'verified', 'evaluating', 'improved', 'neutral', 'declined'], Connection::PARAM_STR_ARRAY)
             ->setParameter('cutoff', $cutoff, Connection::PARAM_INT)
             ->executeQuery()
             ->fetchAllAssociative();
@@ -175,7 +287,7 @@ final class RecommendationImpactEvaluationService
     /**
      * @return array<string,mixed>
      */
-    private function buildWindowPlan(int $appliedAt, int $windowDays, int $bufferDays): array
+    private function buildWindowPlan(int $appliedAt, int $windowDays, int $bufferDays, string $evaluationStage): array
     {
         $appliedDate = new DateTimeImmutable(date('Y-m-d', $appliedAt));
         $beforeStart = $appliedDate->modify('-' . $windowDays . ' days');
@@ -197,6 +309,7 @@ final class RecommendationImpactEvaluationService
             'afterEndTimestamp' => $afterEnd->getTimestamp(),
             'bufferDays' => $bufferDays,
             'windowDays' => $windowDays,
+            'evaluationStage' => $evaluationStage,
         ];
     }
 
@@ -437,6 +550,7 @@ final class RecommendationImpactEvaluationService
             'after_to' => (int)$plan['afterEndTimestamp'],
             'buffer_days' => (int)$plan['bufferDays'],
             'window_days' => (int)$plan['windowDays'],
+            'evaluation_stage' => (string)$plan['evaluationStage'],
             'before_clicks' => $before['clicks'],
             'before_impressions' => $before['impressions'],
             'before_ctr' => $before['ctr'],
@@ -491,10 +605,12 @@ final class RecommendationImpactEvaluationService
             unset($data['crdate']);
             unset($types['crdate']);
             $connection->update(self::IMPACT_TABLE, $data, ['uid' => $existingUid], $types);
+            $this->updateRecommendationStatusFromEvaluation($recommendation, $final, $plan, $now);
             return 1;
         }
 
         $connection->insert(self::IMPACT_TABLE, $data, $types);
+        $this->updateRecommendationStatusFromEvaluation($recommendation, $final, $plan, $now);
         return 1;
     }
 
@@ -511,6 +627,7 @@ final class RecommendationImpactEvaluationService
             'pageUrl' => (string)($recommendation['page_url'] ?? ''),
             'query' => (string)($recommendation['query_text'] ?? ''),
             'appliedDate' => (string)($plan['appliedDate'] ?? ''),
+            'evaluationStage' => (string)($plan['evaluationStage'] ?? ''),
             'before' => (string)($plan['beforeStart'] ?? '') . ' to ' . (string)($plan['beforeEnd'] ?? ''),
             'after' => (string)($plan['afterStart'] ?? '') . ' to ' . (string)($plan['afterEnd'] ?? ''),
             'status' => $status,
@@ -532,6 +649,7 @@ final class RecommendationImpactEvaluationService
             $plan['beforeEnd'],
             $plan['afterStart'],
             $plan['afterEnd'],
+            (string)($plan['evaluationStage'] ?? ''),
             $searchType,
         ]));
     }

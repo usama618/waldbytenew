@@ -37,6 +37,12 @@ openAiModel =
 # cat=AI; type=string; label=OpenAI Responses API URL
 openAiResponsesUrl = https://api.openai.com/v1/responses
 
+# cat=AI; type=string; label=OpenAI input cost per 1M tokens: Optional USD estimate override. Can also be provided by SEO_ASSISTANT_OPENAI_INPUT_COST_PER_MILLION
+openAiInputCostPerMillion =
+
+# cat=AI; type=string; label=OpenAI output cost per 1M tokens: Optional USD estimate override. Can also be provided by SEO_ASSISTANT_OPENAI_OUTPUT_COST_PER_MILLION
+openAiOutputCostPerMillion =
+
 # cat=AI; type=int+; label=AI page analysis limit per generation run
 aiLimit = 10
 

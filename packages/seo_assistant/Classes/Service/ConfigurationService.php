@@ -99,6 +99,22 @@ final class ConfigurationService
         );
     }
 
+    public function getOpenAiInputCostPerMillion(): float
+    {
+        return $this->nonNegativeFloat($this->firstValue(
+            $this->env('SEO_ASSISTANT_OPENAI_INPUT_COST_PER_MILLION'),
+            $this->extensionValue('openAiInputCostPerMillion')
+        ));
+    }
+
+    public function getOpenAiOutputCostPerMillion(): float
+    {
+        return $this->nonNegativeFloat($this->firstValue(
+            $this->env('SEO_ASSISTANT_OPENAI_OUTPUT_COST_PER_MILLION'),
+            $this->extensionValue('openAiOutputCostPerMillion')
+        ));
+    }
+
     public function isAiConfigured(): bool
     {
         return $this->getOpenAiApiKey() !== '' && $this->getOpenAiModel() !== '';
@@ -151,6 +167,13 @@ final class ConfigurationService
         }
 
         return $value;
+    }
+
+    private function nonNegativeFloat(string $value): float
+    {
+        $value = (float)str_replace(',', '.', trim($value));
+
+        return $value > 0 ? $value : 0.0;
     }
 
     private function firstValue(?string ...$values): string
