@@ -136,6 +136,11 @@ It can also convert older `manual_review` rows when they are database-backed, su
 long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
 and dynamic structured-data rows.
 
+Every write run from the backend or CLI is stored in `tx_seoassistant_apply_history`. The backend
+module shows the latest history entries and each row has a `Download history` button. The exported
+Markdown file contains the apply summary, per-recommendation statuses, messages and the raw result
+JSON, so live and local runs each keep their own auditable record.
+
 The backend also has a `Generate fresh recommendations` button. It runs page snapshot, rendered
 snapshot and AI recommendation generation from the module with editable limits, so fresh suggestions
 can be created without running SSH commands manually.
@@ -178,7 +183,8 @@ instead of writing them again.
 
 Dynamic structured data is stored in `tx_seoassistant_structured_data` and rendered through the
 site-package JSON-LD renderer. After deploying a version that adds this table, run TYPO3 extension
-setup/database analysis once on the target environment.
+setup/database analysis once on the target environment. The same setup step creates
+`tx_seoassistant_apply_history` for downloadable apply history.
 
 ## Suggested cron
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\SeoAssistant\Command;
 
+use App\SeoAssistant\Service\ApplyHistoryService;
 use App\SeoAssistant\Service\RecommendationApplyService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -20,6 +21,7 @@ final class RecommendationsApplyCommand extends Command
 
     public function __construct(
         private readonly RecommendationApplyService $recommendationApplyService,
+        private readonly ApplyHistoryService $applyHistoryService,
     ) {
         parent::__construct();
     }
@@ -68,6 +70,28 @@ final class RecommendationsApplyCommand extends Command
             return Command::FAILURE;
         }
 
+        $historyUid = 0;
+        if (!$result['dryRun']) {
+            $alreadyImplemented = ($result['alreadyImplemented'] ?? false) === true;
+            $historyUid = $this->applyHistoryService->record(
+                'applyRecommendation',
+                'Apply recommendation #' . $uid,
+                'cli',
+                'success',
+                [
+                    'total' => 1,
+                    'applied' => $alreadyImplemented ? 0 : 1,
+                    'alreadyImplemented' => $alreadyImplemented ? 1 : 0,
+                    'skipped' => 0,
+                    'failed' => 0,
+                    'message' => $alreadyImplemented
+                        ? 'Recommendation #' . $uid . ' was already implemented and has been hidden.'
+                        : 'Recommendation #' . $uid . ' applied from CLI.',
+                ],
+                [$this->historyRowFromApplyResult($uid, $result, $alreadyImplemented ? 'already_implemented' : 'applied')]
+            );
+        }
+
         $io->section($result['dryRun'] ? 'Dry run' : 'Applied');
         $io->definitionList(
             ['Recommendation UID' => $result['uid']],
@@ -84,6 +108,7 @@ final class RecommendationsApplyCommand extends Command
             ['Image alt skipped' => (string)($result['imageAltSkipped'] ?? 0)],
             ['Already implemented' => ($result['alreadyImplemented'] ?? false) ? 'yes' : 'no'],
             ['Message' => (string)($result['message'] ?? '')],
+            ['History UID' => $historyUid > 0 ? (string)$historyUid : '-'],
         );
 
         if ($result['dryRun']) {
@@ -102,6 +127,28 @@ final class RecommendationsApplyCommand extends Command
             (string)$input->getOption('content-ctype'),
             (int)$input->getOption('limit'),
         );
+        $historyUid = 0;
+        if (!$result['dryRun']) {
+            $historyUid = $this->applyHistoryService->record(
+                'applyAllRecommendations',
+                'Apply all automatic recommendations',
+                'cli',
+                $result['failed'] > 0 ? 'partial' : 'success',
+                [
+                    'total' => $result['total'],
+                    'applied' => $result['applied'],
+                    'alreadyImplemented' => $result['alreadyImplemented'],
+                    'skipped' => $result['skipped'],
+                    'failed' => $result['failed'],
+                    'limit' => (int)$input->getOption('limit'),
+                    'message' => 'Bulk apply complete: applied ' . $result['applied']
+                        . ', already implemented ' . $result['alreadyImplemented']
+                        . ', skipped manual ' . $result['skipped']
+                        . ', failed ' . $result['failed'] . '.',
+                ],
+                $result['rows']
+            );
+        }
 
         $io->section($result['dryRun'] ? 'Dry run: apply all automatic recommendations' : 'Applied all automatic recommendations');
         $io->definitionList(
@@ -110,6 +157,7 @@ final class RecommendationsApplyCommand extends Command
             ['Already implemented' => (string)$result['alreadyImplemented']],
             ['Skipped manual' => (string)$result['skipped']],
             ['Failed' => (string)$result['failed']],
+            ['History UID' => $historyUid > 0 ? (string)$historyUid : '-'],
         );
 
         $rows = [];
@@ -131,5 +179,27 @@ final class RecommendationsApplyCommand extends Command
         }
 
         return $result['failed'] > 0 ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * @param array<string,mixed> $result
+     * @return array<string,mixed>
+     */
+    private function historyRowFromApplyResult(int $uid, array $result, string $status): array
+    {
+        $changedFields = array_values(array_filter(array_map('strval', (array)($result['changedFields'] ?? []))));
+        $message = implode(', ', $changedFields);
+        if ($message === '') {
+            $message = (string)($result['message'] ?? '');
+        }
+
+        return [
+            'uid' => $uid,
+            'pageUid' => (int)($result['pageUid'] ?? 0),
+            'status' => $status,
+            'action' => (string)($result['actionType'] ?? ''),
+            'capability' => (string)($result['applyCapability'] ?? ''),
+            'message' => $message,
+        ];
     }
 }

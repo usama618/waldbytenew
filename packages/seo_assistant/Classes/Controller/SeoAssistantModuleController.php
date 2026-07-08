@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Controller;
 
 use App\SeoAssistant\Service\RecommendationApplyService;
 use App\SeoAssistant\Service\RecommendationService;
+use App\SeoAssistant\Service\ApplyHistoryService;
 use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\PageSnapshotService;
 use App\SeoAssistant\Service\RenderedSnapshotService;
@@ -26,6 +27,7 @@ final class SeoAssistantModuleController
     private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
     private const AI_RUN_TABLE = 'tx_seoassistant_ai_run';
+    private const APPLY_HISTORY_TABLE = 'tx_seoassistant_apply_history';
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
@@ -34,6 +36,7 @@ final class SeoAssistantModuleController
         private readonly PageSnapshotService $pageSnapshotService,
         private readonly RenderedSnapshotService $renderedSnapshotService,
         private readonly RecommendationService $recommendationService,
+        private readonly ApplyHistoryService $applyHistoryService,
         private readonly ConfigurationService $configuration,
         private readonly FormProtectionFactory $formProtectionFactory,
     ) {}
@@ -43,6 +46,11 @@ final class SeoAssistantModuleController
         $downloadRunUid = (int)($request->getQueryParams()['downloadAiRun'] ?? 0);
         if ($downloadRunUid > 0) {
             return $this->downloadAiRunDocument($downloadRunUid);
+        }
+
+        $downloadHistoryUid = (int)($request->getQueryParams()['downloadApplyHistory'] ?? 0);
+        if ($downloadHistoryUid > 0) {
+            return $this->downloadApplyHistoryDocument($downloadHistoryUid);
         }
 
         $notice = null;
@@ -80,16 +88,34 @@ final class SeoAssistantModuleController
                 }
 
                 $result = $this->recommendationApplyService->apply($uid, false, true, true, 'seo_text');
+                $alreadyImplemented = ($result['alreadyImplemented'] ?? false) === true;
+                $historyUid = $this->applyHistoryService->record(
+                    'applyRecommendation',
+                    'Apply recommendation #' . $uid,
+                    'backend',
+                    'success',
+                    [
+                        'total' => 1,
+                        'applied' => $alreadyImplemented ? 0 : 1,
+                        'alreadyImplemented' => $alreadyImplemented ? 1 : 0,
+                        'skipped' => 0,
+                        'failed' => 0,
+                        'message' => $alreadyImplemented
+                            ? 'Recommendation #' . $uid . ' was already implemented and has been hidden.'
+                            : 'Recommendation #' . $uid . ' applied.',
+                    ],
+                    [$this->applyResultHistoryRow($uid, $result, $alreadyImplemented ? 'already_implemented' : 'applied')]
+                );
                 if (($result['alreadyImplemented'] ?? false) === true) {
                     return [
                         'type' => 'success',
-                        'message' => 'Recommendation #' . $uid . ' was already implemented and has been hidden.',
+                        'message' => 'Recommendation #' . $uid . ' was already implemented and has been hidden. History #' . $historyUid . '.',
                     ];
                 }
 
                 return [
                     'type' => 'success',
-                    'message' => 'Recommendation #' . $uid . ' applied.',
+                    'message' => 'Recommendation #' . $uid . ' applied. History #' . $historyUid . '.',
                 ];
             }
 
@@ -100,23 +126,64 @@ final class SeoAssistantModuleController
                 }
 
                 $this->recommendationApplyService->reject($uid);
+                $historyUid = $this->applyHistoryService->record(
+                    'rejectRecommendation',
+                    'Reject recommendation #' . $uid,
+                    'backend',
+                    'success',
+                    [
+                        'total' => 1,
+                        'applied' => 0,
+                        'alreadyImplemented' => 0,
+                        'skipped' => 1,
+                        'failed' => 0,
+                        'message' => 'Recommendation #' . $uid . ' rejected. It will not be included in Apply all automatic.',
+                    ],
+                    [[
+                        'uid' => $uid,
+                        'pageUid' => 0,
+                        'status' => 'dismissed',
+                        'action' => 'reject',
+                        'capability' => 'manual_review',
+                        'message' => 'Rejected in the backend module.',
+                    ]]
+                );
 
                 return [
                     'type' => 'success',
-                    'message' => 'Recommendation #' . $uid . ' rejected. It will not be included in Apply all automatic.',
+                    'message' => 'Recommendation #' . $uid . ' rejected. It will not be included in Apply all automatic. History #' . $historyUid . '.',
                 ];
             }
 
             if ($action === 'applyAllRecommendations') {
                 $limit = max(1, min(500, (int)($parsedBody['limit'] ?? 100)));
                 $result = $this->recommendationApplyService->applyAll(false, true, true, 'seo_text', $limit);
+                $historyUid = $this->applyHistoryService->record(
+                    'applyAllRecommendations',
+                    'Apply all automatic recommendations',
+                    'backend',
+                    $result['failed'] > 0 ? 'partial' : 'success',
+                    [
+                        'total' => $result['total'],
+                        'applied' => $result['applied'],
+                        'alreadyImplemented' => $result['alreadyImplemented'],
+                        'skipped' => $result['skipped'],
+                        'failed' => $result['failed'],
+                        'limit' => $limit,
+                        'message' => 'Bulk apply complete: applied ' . $result['applied']
+                            . ', already implemented ' . $result['alreadyImplemented']
+                            . ', skipped manual ' . $result['skipped']
+                            . ', failed ' . $result['failed'] . '.',
+                    ],
+                    $result['rows']
+                );
 
                 return [
                     'type' => $result['failed'] > 0 ? 'error' : 'success',
                     'message' => 'Bulk apply complete: applied ' . $result['applied']
                         . ', already implemented ' . $result['alreadyImplemented']
                         . ', skipped manual ' . $result['skipped']
-                        . ', failed ' . $result['failed'] . '.',
+                        . ', failed ' . $result['failed'] . '. History #' . $historyUid . '.',
                 ];
             }
 
@@ -155,6 +222,28 @@ final class SeoAssistantModuleController
     }
 
     /**
+     * @param array<string,mixed> $result
+     * @return array<string,mixed>
+     */
+    private function applyResultHistoryRow(int $uid, array $result, string $status): array
+    {
+        $changedFields = array_values(array_filter(array_map('strval', (array)($result['changedFields'] ?? []))));
+        $message = implode(', ', $changedFields);
+        if ($message === '') {
+            $message = (string)($result['message'] ?? '');
+        }
+
+        return [
+            'uid' => $uid,
+            'pageUid' => (int)($result['pageUid'] ?? 0),
+            'status' => $status,
+            'action' => (string)($result['actionType'] ?? ''),
+            'capability' => (string)($result['applyCapability'] ?? ''),
+            'message' => $message,
+        ];
+    }
+
+    /**
      * @param array{type:string,message:string}|null $notice
      */
     private function render(ServerRequestInterface $request, ?array $notice = null): string
@@ -167,6 +256,7 @@ final class SeoAssistantModuleController
         $recommendations = $this->fetchRecommendations();
         $gscInsights = $this->fetchGscInsights();
         $aiRuns = $this->fetchAiRuns();
+        $applyHistory = $this->applyHistoryService->fetchRecent(20);
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
         $stats = $this->fetchStats();
@@ -226,6 +316,8 @@ final class SeoAssistantModuleController
             . '<div class="panel">' . $this->renderGscInsightsTable($gscInsights) . '</div>'
             . '<h2>AI Run Memory</h2>'
             . '<div class="panel">' . $this->renderAiRunsTable($aiRuns) . '</div>'
+            . '<h2>Apply History</h2>'
+            . '<div class="panel">' . $this->renderApplyHistoryTable($applyHistory) . '</div>'
             . '<h2>Recommendations</h2>'
             . $this->renderRecommendationActions($formToken)
             . '<div class="panel">' . $this->renderRecommendationsTable($recommendations, $formToken) . '</div>'
@@ -255,6 +347,7 @@ final class SeoAssistantModuleController
             self::RECOMMENDATION_TABLE,
             self::AI_RUN_TABLE,
             'tx_seoassistant_structured_data',
+            self::APPLY_HISTORY_TABLE,
         ];
 
         return array_values(array_diff($requiredTables, $tableNames));
@@ -297,6 +390,28 @@ final class SeoAssistantModuleController
         $recommendations = $this->fetchRecommendationsForAiRun($run);
         $document = $this->buildAiRunSuggestionsDocument($run, $recommendations);
         $filename = 'seo-assistant-run-' . $runUid . '-' . date('Ymd-His', (int)($run['crdate'] ?? time())) . '.md';
+
+        return new HtmlResponse($document, 200, [
+            'Content-Type' => 'text/markdown; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    private function downloadApplyHistoryDocument(int $historyUid): ResponseInterface
+    {
+        $missingTables = $this->findMissingTables();
+        if ($missingTables !== []) {
+            return new HtmlResponse($this->renderMissingTables($missingTables), 503);
+        }
+
+        $history = $this->applyHistoryService->fetchByUid($historyUid);
+        if ($history === null) {
+            return new HtmlResponse('Apply history not found.', 404, ['Content-Type' => 'text/plain; charset=utf-8']);
+        }
+
+        $document = $this->applyHistoryService->buildMarkdown($history);
+        $filename = 'seo-assistant-apply-history-' . $historyUid . '-' . date('Ymd-His', (int)($history['crdate'] ?? time())) . '.md';
 
         return new HtmlResponse($document, 200, [
             'Content-Type' => 'text/markdown; charset=utf-8',
@@ -789,7 +904,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int}
+     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int}
      */
     private function fetchStats(): array
     {
@@ -800,6 +915,7 @@ final class SeoAssistantModuleController
             'rendered' => $this->countRows(self::RENDERED_SNAPSHOT_TABLE),
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
             'aiRuns' => $this->countRows(self::AI_RUN_TABLE),
+            'applyHistory' => $this->countRows(self::APPLY_HISTORY_TABLE),
         ];
     }
 
@@ -861,7 +977,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int} $stats
+     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int} $stats
      */
     private function renderStats(array $stats): string
     {
@@ -872,6 +988,7 @@ final class SeoAssistantModuleController
             . '<div class="stat"><span class="muted">Rendered URLs</span><strong>' . $stats['rendered'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
             . '<div class="stat"><span class="muted">AI memory runs</span><strong>' . $stats['aiRuns'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Apply history</span><strong>' . $stats['applyHistory'] . '</strong></div>'
             . '</div>';
     }
 
@@ -967,6 +1084,41 @@ final class SeoAssistantModuleController
             . ($runs === [] ? '<tr><td colspan="8" class="muted">No AI runs recorded yet.</td></tr>' : '')
             . implode('', array_map($this->renderAiRunRow(...), $runs))
             . '</tbody></table>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $historyRows
+     */
+    private function renderApplyHistoryTable(array $historyRows): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Action</th><th>Source</th><th>Status</th><th>Result</th><th>Summary</th><th>Document</th>'
+            . '</tr></thead><tbody>'
+            . ($historyRows === [] ? '<tr><td colspan="7" class="muted">No applied recommendation history yet.</td></tr>' : '')
+            . implode('', array_map($this->renderApplyHistoryRow(...), $historyRows))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderApplyHistoryRow(array $row): string
+    {
+        $result = 'Total ' . (int)($row['total'] ?? 0)
+            . '<br>Applied ' . (int)($row['applied'] ?? 0)
+            . '<br>Already implemented ' . (int)($row['already_implemented'] ?? 0)
+            . '<br>Skipped ' . (int)($row['skipped'] ?? 0)
+            . '<br>Failed ' . (int)($row['failed'] ?? 0);
+
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td>' . $this->escape((string)($row['action_label'] ?? '')) . '<br><span class="muted">' . $this->escape((string)($row['action_type'] ?? '')) . '</span></td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['trigger_source'] ?? '')) . '</span></td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
+            . '<td>' . $result . '</td>'
+            . '<td>' . nl2br($this->escape($this->shorten((string)($row['summary'] ?? ''), 180))) . '</td>'
+            . '<td><a class="button" href="?downloadApplyHistory=' . (int)($row['uid'] ?? 0) . '">Download history</a></td>'
+            . '</tr>';
     }
 
     /**

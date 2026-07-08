@@ -93,6 +93,11 @@ rows when the extension can convert them safely from their recommendation type, 
 titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
 structured-data suggestions.
 
+Every backend or CLI write run is recorded in `tx_seoassistant_apply_history`. The backend module
+shows the latest apply history entries with counts for applied, already implemented, skipped and
+failed recommendations. Each entry has a `Download history` button that exports a Markdown audit
+document with the per-recommendation result rows and raw JSON result.
+
 The same backend area also has a `Generate fresh recommendations` button. It runs the equivalent of
 the page snapshot, rendered snapshot and recommendation generation commands with configurable
 render/recommendation/AI limits, so editors can refresh AI suggestions without SSH access.
@@ -128,4 +133,4 @@ JSON-LD type is already present in the latest rendered snapshot.
 
 Structured-data recommendations are stored in `tx_seoassistant_structured_data` and rendered by the
 site package JSON-LD renderer. After deploying this feature, run TYPO3 extension setup/database
-analysis once so the new table exists.
+analysis once so the structured-data and apply-history tables exist.
