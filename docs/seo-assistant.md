@@ -130,7 +130,8 @@ File/template changes are reported as skipped. Content recommendations create hi
 
 The backend module `Web > SEO Assistant` has the same behavior, but the buttons are optimized for
 one-click use: every automatic recommendation has an `Apply` button, and the recommendations table
-has an `Apply all automatic` button. Backend apply publishes generated content sections directly.
+has an `Apply all automatic` button. Every row also has a `Reject` button. Rejected rows are marked
+`dismissed`, hidden from the table, and excluded from `Apply all automatic`. Backend apply publishes generated content sections directly.
 It can also convert older `manual_review` rows when they are database-backed, such as long title,
 long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
 and dynamic structured-data rows.

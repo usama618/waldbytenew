@@ -216,6 +216,36 @@ final class RecommendationApplyService
     }
 
     /**
+     * @return array{uid:int,status:string}
+     */
+    public function reject(int $recommendationUid): array
+    {
+        $recommendation = $this->fetchRecommendation($recommendationUid);
+        $now = time();
+        $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+            ->update(
+                self::RECOMMENDATION_TABLE,
+                [
+                    'status' => 'dismissed',
+                    'verification_status' => 'rejected',
+                    'verification_json' => $this->json([
+                        'status' => 'rejected',
+                        'message' => 'Recommendation was rejected in the backend module.',
+                        'previous_status' => (string)($recommendation['status'] ?? ''),
+                    ]),
+                    'tstamp' => $now,
+                ],
+                ['uid' => $recommendationUid],
+                ['tstamp' => Connection::PARAM_INT]
+            );
+
+        return [
+            'uid' => $recommendationUid,
+            'status' => 'dismissed',
+        ];
+    }
+
+    /**
      * @return list<array<string,mixed>>
      */
     private function fetchAutomaticRecommendations(int $limit, bool $force): array

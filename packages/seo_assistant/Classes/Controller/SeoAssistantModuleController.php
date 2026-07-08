@@ -85,6 +85,20 @@ final class SeoAssistantModuleController
                 ];
             }
 
+            if ($action === 'rejectRecommendation') {
+                $uid = (int)($parsedBody['uid'] ?? 0);
+                if ($uid <= 0) {
+                    return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
+                }
+
+                $this->recommendationApplyService->reject($uid);
+
+                return [
+                    'type' => 'success',
+                    'message' => 'Recommendation #' . $uid . ' rejected. It will not be included in Apply all automatic.',
+                ];
+            }
+
             if ($action === 'applyAllRecommendations') {
                 $limit = max(1, min(500, (int)($parsedBody['limit'] ?? 100)));
                 $result = $this->recommendationApplyService->applyAll(false, true, true, 'seo_text', $limit);
@@ -150,7 +164,10 @@ final class SeoAssistantModuleController
             . '.pill-notice{background:#e0f2fe;color:#075985;}'
             . '.button{display:inline-block;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#1f2933;padding:5px 8px;text-decoration:none;font-size:12px;}'
             . '.button:hover{background:#eef1f4;}'
+            . '.button-reject{border-color:#fecaca;color:#991b1b;}'
+            . '.button-reject:hover{background:#fef2f2;}'
             . '.inline-form{display:inline;margin:0;}'
+            . '.row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}'
             . '.actions{display:flex;align-items:center;gap:8px;margin:0 0 10px;}'
             . '.actions input{width:70px;border:1px solid #cbd5e1;border-radius:4px;padding:5px 7px;}'
             . '.notice{border:1px solid #d9dde3;border-radius:6px;padding:10px 12px;margin:14px 0;background:#fff;}'
@@ -902,7 +919,7 @@ final class SeoAssistantModuleController
     private function renderRecommendationsTable(array $recommendations, string $formToken): string
     {
         return '<table><thead><tr>'
-            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Apply</th><th>Command</th>'
+            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Actions</th><th>Command</th>'
             . '</tr></thead><tbody>'
             . ($recommendations === [] ? '<tr><td colspan="13" class="muted">No recommendations need action. Run the snapshot and generate commands when you want a fresh audit.</td></tr>' : '')
             . implode('', array_map(fn(array $row): string => $this->renderRecommendationRow($row, $formToken), $recommendations))
@@ -1032,14 +1049,23 @@ final class SeoAssistantModuleController
                 : 'Apply first';
         }
         $canApplyAutomatically = in_array($applyCapability, ['safe_metadata', 'content_draft', 'image_alt', 'indexing_update', 'structured_data'], true);
-        $applyControl = $canApplyAutomatically
-            ? '<form method="post" class="inline-form">'
+        $applyControl = '<div class="row-actions">';
+        if ($canApplyAutomatically) {
+            $applyControl .= '<form method="post" class="inline-form">'
                 . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
                 . '<input type="hidden" name="action" value="applyRecommendation">'
                 . '<input type="hidden" name="uid" value="' . (int)$row['uid'] . '">'
                 . '<button class="button" type="submit">Apply</button>'
-                . '</form>'
-            : '<span class="muted">Manual</span>';
+                . '</form>';
+        } else {
+            $applyControl .= '<span class="muted">Manual</span>';
+        }
+        $applyControl .= '<form method="post" class="inline-form">'
+            . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+            . '<input type="hidden" name="action" value="rejectRecommendation">'
+            . '<input type="hidden" name="uid" value="' . (int)$row['uid'] . '">'
+            . '<button class="button button-reject" type="submit">Reject</button>'
+            . '</form></div>';
 
         return '<tr>'
             . '<td>' . (int)($row['uid'] ?? 0) . '</td>'

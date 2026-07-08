@@ -86,7 +86,9 @@ File/template changes are skipped. CLI-created content stays hidden unless `--pu
 passed. In the backend module, the Apply buttons publish generated content sections directly.
 
 The backend module also shows an `Apply` button for every automatic recommendation and an
-`Apply all automatic` button above the table. The buttons can also handle older `manual_review`
+`Apply all automatic` button above the table. Every row also has a `Reject` button. Rejected
+recommendations are marked `dismissed`, hidden from the table, and excluded from future bulk apply
+runs. The buttons can also handle older `manual_review`
 rows when the extension can convert them safely from their recommendation type, for example long
 titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
 structured-data suggestions.
