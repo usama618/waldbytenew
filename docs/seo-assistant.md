@@ -136,6 +136,12 @@ It can also convert older `manual_review` rows when they are database-backed, su
 long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
 and dynamic structured-data rows.
 
+The backend also has a `Generate fresh recommendations` button. It runs page snapshot, rendered
+snapshot and AI recommendation generation from the module with editable limits, so fresh suggestions
+can be created without running SSH commands manually.
+Because this can take time, the module shows a blocking progress overlay after submit until TYPO3
+finishes and the page reloads.
+
 For metadata recommendations, the second command writes `pages.seo_title` and/or
 `pages.description`, records the applied field values, and sets verification to pending.
 

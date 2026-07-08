@@ -93,6 +93,12 @@ rows when the extension can convert them safely from their recommendation type, 
 titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
 structured-data suggestions.
 
+The same backend area also has a `Generate fresh recommendations` button. It runs the equivalent of
+the page snapshot, rendered snapshot and recommendation generation commands with configurable
+render/recommendation/AI limits, so editors can refresh AI suggestions without SSH access.
+Long-running backend actions show a blocking progress overlay until TYPO3 finishes the request and
+reloads the module.
+
 Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
 recommendations create a hidden `seo_text` element by default:
 

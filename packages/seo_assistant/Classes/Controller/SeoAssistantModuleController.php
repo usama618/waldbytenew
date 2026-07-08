@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\SeoAssistant\Controller;
 
 use App\SeoAssistant\Service\RecommendationApplyService;
+use App\SeoAssistant\Service\RecommendationService;
+use App\SeoAssistant\Service\ConfigurationService;
+use App\SeoAssistant\Service\PageSnapshotService;
+use App\SeoAssistant\Service\RenderedSnapshotService;
 use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -27,6 +31,10 @@ final class SeoAssistantModuleController
         private readonly ConnectionPool $connectionPool,
         private readonly UrlNormalizer $urlNormalizer,
         private readonly RecommendationApplyService $recommendationApplyService,
+        private readonly PageSnapshotService $pageSnapshotService,
+        private readonly RenderedSnapshotService $renderedSnapshotService,
+        private readonly RecommendationService $recommendationService,
+        private readonly ConfigurationService $configuration,
         private readonly FormProtectionFactory $formProtectionFactory,
     ) {}
 
@@ -112,6 +120,31 @@ final class SeoAssistantModuleController
                 ];
             }
 
+            if ($action === 'generateRecommendations') {
+                $renderedLimit = max(1, min(500, (int)($parsedBody['renderedLimit'] ?? $this->configuration->getRenderedSnapshotLimit())));
+                $recommendationLimit = max(1, min(500, (int)($parsedBody['recommendationLimit'] ?? $this->configuration->getRecommendationLimit())));
+                $aiLimit = max(1, min(100, (int)($parsedBody['aiLimit'] ?? $this->configuration->getAiLimit())));
+
+                $pageResult = $this->pageSnapshotService->snapshot(null, false);
+                $renderedResult = $this->renderedSnapshotService->snapshot(null, [], $renderedLimit, false);
+                $recommendationResult = $this->recommendationService->generate(
+                    $this->configuration->getMinImpressions(),
+                    $recommendationLimit,
+                    true,
+                    $aiLimit
+                );
+
+                return [
+                    'type' => 'success',
+                    'message' => 'Fresh recommendations generated: page snapshots '
+                        . $pageResult['stored'] . '/' . $pageResult['processed']
+                        . ', rendered snapshots ' . $renderedResult['stored'] . '/' . $renderedResult['processed']
+                        . ', failed renders ' . $renderedResult['failed']
+                        . ', stored recommendations ' . $recommendationResult['stored']
+                        . ', mode ' . $recommendationResult['generationMode'] . '.',
+                ];
+            }
+
             return ['type' => 'error', 'message' => 'Unknown SEO Assistant action.'];
         } catch (Throwable $exception) {
             return [
@@ -168,12 +201,21 @@ final class SeoAssistantModuleController
             . '.button-reject:hover{background:#fef2f2;}'
             . '.inline-form{display:inline;margin:0;}'
             . '.row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}'
-            . '.actions{display:flex;align-items:center;gap:8px;margin:0 0 10px;}'
+            . '.actions{display:flex;align-items:center;gap:8px;margin:0 0 10px;flex-wrap:wrap;}'
             . '.actions input{width:70px;border:1px solid #cbd5e1;border-radius:4px;padding:5px 7px;}'
             . '.notice{border:1px solid #d9dde3;border-radius:6px;padding:10px 12px;margin:14px 0;background:#fff;}'
             . '.notice-success{border-color:#bbf7d0;background:#f0fdf4;color:#166534;}'
             . '.notice-error{border-color:#fecaca;background:#fef2f2;color:#991b1b;}'
             . '.issues{display:flex;gap:5px;flex-wrap:wrap;}'
+            . '.busy-overlay{position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.42);backdrop-filter:blur(2px);}'
+            . '.busy-overlay.is-active{display:flex;}'
+            . '.busy-box{width:min(520px,calc(100vw - 48px));background:#fff;border:1px solid #d9dde3;border-radius:6px;padding:18px;box-shadow:0 18px 60px rgba(15,23,42,.22);}'
+            . '.busy-title{font-weight:700;margin:0 0 6px;}'
+            . '.busy-text{margin:0 0 14px;color:#5d6875;}'
+            . '.busy-bar{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;}'
+            . '.busy-bar span{display:block;width:42%;height:100%;border-radius:999px;background:#2563eb;animation:seoBusy 1.25s ease-in-out infinite;}'
+            . '@keyframes seoBusy{0%{transform:translateX(-110%);}50%{transform:translateX(65%);}100%{transform:translateX(250%);}}'
+            . 'body.is-busy .button,body.is-busy input{pointer-events:none;opacity:.72;}'
             . 'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:normal;}'
             . '</style></head><body>'
             . '<h1>SEO Assistant</h1>'
@@ -191,6 +233,7 @@ final class SeoAssistantModuleController
             . '<div class="panel">' . $this->renderRenderedSnapshotsTable($renderedSnapshots) . '</div>'
             . '<h2>CMS Content Snapshots</h2>'
             . '<div class="panel">' . $this->renderPageSnapshotsTable($pageSnapshots) . '</div>'
+            . $this->renderBusyOverlay()
             . '</body></html>';
     }
 
@@ -845,9 +888,53 @@ final class SeoAssistantModuleController
         return '<div class="notice notice-' . $type . '">' . $this->escape((string)$notice['message']) . '</div>';
     }
 
+    private function renderBusyOverlay(): string
+    {
+        return '<div class="busy-overlay" id="seoBusyOverlay" aria-live="polite" aria-busy="true">'
+            . '<div class="busy-box">'
+            . '<p class="busy-title" id="seoBusyTitle">SEO Assistant is working</p>'
+            . '<p class="busy-text" id="seoBusyText">Please keep this tab open until the action finishes.</p>'
+            . '<div class="busy-bar"><span></span></div>'
+            . '</div>'
+            . '</div>'
+            . '<script>'
+            . '(function(){'
+            . 'var overlay=document.getElementById("seoBusyOverlay");'
+            . 'var title=document.getElementById("seoBusyTitle");'
+            . 'var text=document.getElementById("seoBusyText");'
+            . 'if(!overlay||!title||!text){return;}'
+            . 'var labels={'
+            . 'generateRecommendations:["Generating fresh recommendations","Running page snapshots, rendered frontend snapshots and AI recommendation generation. This can take a while."],'
+            . 'applyAllRecommendations:["Applying automatic recommendations","Writing safe TYPO3 database changes. This can take a moment."],'
+            . 'applyRecommendation:["Applying recommendation","Writing this recommendation and refreshing the module."],'
+            . 'rejectRecommendation:["Rejecting recommendation","Marking this suggestion as dismissed."]'
+            . '};'
+            . 'document.querySelectorAll("form[method=post]").forEach(function(form){'
+            . 'form.addEventListener("submit",function(){'
+            . 'var actionInput=form.querySelector("input[name=action]");'
+            . 'var action=actionInput?actionInput.value:"";'
+            . 'var label=labels[action]||labels.generateRecommendations;'
+            . 'title.textContent=label[0];text.textContent=label[1];'
+            . 'document.body.classList.add("is-busy");overlay.classList.add("is-active");'
+            . 'form.querySelectorAll("button").forEach(function(button){button.disabled=true;});'
+            . '});'
+            . '});'
+            . '})();'
+            . '</script>';
+    }
+
     private function renderRecommendationActions(string $formToken): string
     {
         return '<form method="post" class="actions">'
+            . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+            . '<input type="hidden" name="action" value="generateRecommendations">'
+            . '<button class="button" type="submit">Generate fresh recommendations</button>'
+            . '<label class="muted">Render limit <input type="number" name="renderedLimit" value="' . $this->configuration->getRenderedSnapshotLimit() . '" min="1" max="500"></label>'
+            . '<label class="muted">Recommendation limit <input type="number" name="recommendationLimit" value="' . $this->configuration->getRecommendationLimit() . '" min="1" max="500"></label>'
+            . '<label class="muted">AI limit <input type="number" name="aiLimit" value="' . $this->configuration->getAiLimit() . '" min="1" max="100"></label>'
+            . '<span class="muted">Runs page snapshot, rendered snapshot and AI recommendation generation.</span>'
+            . '</form>'
+            . '<form method="post" class="actions">'
             . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
             . '<input type="hidden" name="action" value="applyAllRecommendations">'
             . '<button class="button" type="submit">Apply all automatic</button>'
