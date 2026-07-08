@@ -129,25 +129,13 @@ final class RecommendationApplyService
                     $this->markRecommendationImplemented($uid, $pageUid, $implementedState);
                 }
                 $alreadyImplemented++;
-                $rows[] = [
-                    'uid' => $uid,
-                    'status' => 'already_implemented',
-                    'action' => $action['actionType'],
-                    'capability' => $action['applyCapability'],
-                    'message' => $implementedState['message'],
-                ];
+                $rows[] = $this->historyRowForRecommendation($recommendation, $pageUid, $action, 'already_implemented', $implementedState['message']);
                 continue;
             }
 
             if (!in_array($action['applyCapability'], self::AUTO_APPLY_CAPABILITIES, true)) {
                 $skipped++;
-                $rows[] = [
-                    'uid' => $uid,
-                    'status' => 'skipped',
-                    'action' => $action['actionType'],
-                    'capability' => $action['applyCapability'],
-                    'message' => 'Manual recommendation cannot be applied automatically.',
-                ];
+                $rows[] = $this->historyRowForRecommendation($recommendation, $pageUid, $action, 'skipped', 'Manual recommendation cannot be applied automatically.');
                 continue;
             }
 
@@ -169,13 +157,7 @@ final class RecommendationApplyService
                 ];
             } catch (RuntimeException $exception) {
                 $failed++;
-                $rows[] = [
-                    'uid' => $uid,
-                    'status' => 'error',
-                    'action' => $action['actionType'],
-                    'capability' => $action['applyCapability'],
-                    'message' => $exception->getMessage(),
-                ];
+                $rows[] = $this->historyRowForRecommendation($recommendation, $pageUid, $action, 'error', $exception->getMessage());
             }
         }
 
@@ -243,6 +225,124 @@ final class RecommendationApplyService
             'uid' => $recommendationUid,
             'status' => 'dismissed',
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
+     * @return array<string,mixed>
+     */
+    private function historyRowForRecommendation(array $recommendation, int $pageUid, array $action, string $status, string $message): array
+    {
+        return [
+            'uid' => (int)($recommendation['uid'] ?? 0),
+            'pageUid' => $pageUid,
+            'pageUrl' => (string)($recommendation['page_url'] ?? ''),
+            'query' => (string)($recommendation['query_text'] ?? ''),
+            'priority' => (int)($recommendation['priority'] ?? 0),
+            'type' => (string)($recommendation['recommendation_type'] ?? ''),
+            'status' => $status,
+            'action' => $action['actionType'],
+            'capability' => $action['applyCapability'],
+            'message' => $message,
+            'issue' => (string)($recommendation['issue'] ?? ''),
+            'recommendation' => (string)($recommendation['recommendation'] ?? ''),
+            'current' => $this->currentStateForHistory($recommendation, $pageUid),
+            'proposed' => $this->proposedStateForHistory($recommendation, $action),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @return array<string,mixed>
+     */
+    private function currentStateForHistory(array $recommendation, int $pageUid): array
+    {
+        $pageUrl = (string)($recommendation['page_url'] ?? '');
+        $page = $pageUid > 0 ? $this->fetchPageRecord($pageUid) : [];
+        $pageSnapshot = $this->fetchPageSnapshotForHistory($pageUid, $pageUrl);
+        $renderedSnapshot = $this->fetchRenderedSnapshot($pageUrl) ?? [];
+
+        return [
+            'cms_page' => [
+                'uid' => $pageUid,
+                'title' => (string)($page['title'] ?? ''),
+                'nav_title' => (string)($page['nav_title'] ?? ''),
+                'slug' => (string)($page['slug'] ?? ''),
+                'seo_title' => (string)($page['seo_title'] ?? ''),
+                'description' => (string)($page['description'] ?? ''),
+                'no_index' => (int)($page['no_index'] ?? 0),
+                'no_follow' => (int)($page['no_follow'] ?? 0),
+                'canonical_link' => (string)($page['canonical_link'] ?? ''),
+            ],
+            'cms_snapshot' => [
+                'h1' => (string)($pageSnapshot['h1'] ?? ''),
+                'word_count' => (int)($pageSnapshot['word_count'] ?? 0),
+                'robots' => (string)($pageSnapshot['robots'] ?? ''),
+                'canonical_url' => (string)($pageSnapshot['canonical_url'] ?? ''),
+                'content_preview' => $this->historyPreview((string)($pageSnapshot['content_text'] ?? ''), 700),
+            ],
+            'rendered_frontend' => [
+                'html_title' => (string)($renderedSnapshot['html_title'] ?? ''),
+                'meta_description' => (string)($renderedSnapshot['meta_description'] ?? ''),
+                'robots' => (string)($renderedSnapshot['robots'] ?? ''),
+                'canonical_url' => (string)($renderedSnapshot['canonical_url'] ?? ''),
+                'word_count' => (int)($renderedSnapshot['word_count'] ?? 0),
+                'h1_count' => (int)($renderedSnapshot['h1_count'] ?? 0),
+                'missing_alt_count' => (int)($renderedSnapshot['missing_alt_count'] ?? 0),
+                'visible_text_preview' => $this->historyPreview((string)($renderedSnapshot['visible_text'] ?? ''), 700),
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
+     * @return array<string,mixed>
+     */
+    private function proposedStateForHistory(array $recommendation, array $action): array
+    {
+        return [
+            'seo_title' => $action['seoTitle'] !== '' ? $action['seoTitle'] : (string)($recommendation['proposed_seo_title'] ?? ''),
+            'description' => $action['description'] !== '' ? $action['description'] : (string)($recommendation['proposed_description'] ?? ''),
+            'action_payload' => $action['payload'],
+            'recommendation_text' => (string)($recommendation['recommendation'] ?? ''),
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function fetchPageSnapshotForHistory(int $pageUid, string $pageUrl): array
+    {
+        $connection = $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE);
+        $queryBuilder = $connection->createQueryBuilder()
+            ->select('*')
+            ->from(self::PAGE_SNAPSHOT_TABLE)
+            ->setMaxResults(1);
+
+        if ($pageUid > 0) {
+            $queryBuilder
+                ->where('page_uid = :pageUid')
+                ->setParameter('pageUid', $pageUid, Connection::PARAM_INT);
+        } elseif ($pageUrl !== '') {
+            $queryBuilder
+                ->where('page_url = :pageUrl')
+                ->setParameter('pageUrl', $pageUrl);
+        } else {
+            return [];
+        }
+
+        $row = $queryBuilder->executeQuery()->fetchAssociative();
+
+        return is_array($row) ? $row : [];
+    }
+
+    private function historyPreview(string $text, int $length): string
+    {
+        $text = $this->cleanText($text);
+
+        return mb_strlen($text) > $length ? mb_substr($text, 0, $length - 3) . '...' : $text;
     }
 
     /**

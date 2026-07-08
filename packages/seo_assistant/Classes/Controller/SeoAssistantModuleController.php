@@ -9,6 +9,7 @@ use App\SeoAssistant\Service\RecommendationService;
 use App\SeoAssistant\Service\ApplyHistoryService;
 use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\PageSnapshotService;
+use App\SeoAssistant\Service\RecommendationImpactEvaluationService;
 use App\SeoAssistant\Service\RenderedSnapshotService;
 use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
@@ -28,6 +29,7 @@ final class SeoAssistantModuleController
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
     private const AI_RUN_TABLE = 'tx_seoassistant_ai_run';
     private const APPLY_HISTORY_TABLE = 'tx_seoassistant_apply_history';
+    private const IMPACT_EVALUATION_TABLE = 'tx_seoassistant_impact_evaluation';
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
@@ -37,6 +39,7 @@ final class SeoAssistantModuleController
         private readonly RenderedSnapshotService $renderedSnapshotService,
         private readonly RecommendationService $recommendationService,
         private readonly ApplyHistoryService $applyHistoryService,
+        private readonly RecommendationImpactEvaluationService $impactEvaluationService,
         private readonly ConfigurationService $configuration,
         private readonly FormProtectionFactory $formProtectionFactory,
     ) {}
@@ -257,6 +260,7 @@ final class SeoAssistantModuleController
         $gscInsights = $this->fetchGscInsights();
         $aiRuns = $this->fetchAiRuns();
         $applyHistory = $this->applyHistoryService->fetchRecent(20);
+        $impactEvaluations = $this->impactEvaluationService->fetchRecentEvaluations(20);
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
         $stats = $this->fetchStats();
@@ -320,6 +324,8 @@ final class SeoAssistantModuleController
             . '<div class="panel">' . $this->renderAiRunsTable($aiRuns) . '</div>'
             . '<h2>Apply History</h2>'
             . '<div class="panel">' . $this->renderApplyHistoryTable($applyHistory) . '</div>'
+            . '<h2>Impact Evaluations</h2>'
+            . '<div class="panel">' . $this->renderImpactEvaluationsTable($impactEvaluations) . '</div>'
             . '<h2>Recommendations</h2>'
             . $this->renderRecommendationActions($formToken)
             . '<div class="panel table-scroll">' . $this->renderRecommendationsTable($recommendations, $formToken) . '</div>'
@@ -350,6 +356,7 @@ final class SeoAssistantModuleController
             self::AI_RUN_TABLE,
             'tx_seoassistant_structured_data',
             self::APPLY_HISTORY_TABLE,
+            self::IMPACT_EVALUATION_TABLE,
         ];
 
         return array_values(array_diff($requiredTables, $tableNames));
@@ -906,7 +913,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int}
+     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int,impactEvaluations:int}
      */
     private function fetchStats(): array
     {
@@ -918,6 +925,7 @@ final class SeoAssistantModuleController
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
             'aiRuns' => $this->countRows(self::AI_RUN_TABLE),
             'applyHistory' => $this->countRows(self::APPLY_HISTORY_TABLE),
+            'impactEvaluations' => $this->countRows(self::IMPACT_EVALUATION_TABLE),
         ];
     }
 
@@ -979,7 +987,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int} $stats
+     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,applyHistory:int,impactEvaluations:int} $stats
      */
     private function renderStats(array $stats): string
     {
@@ -991,6 +999,7 @@ final class SeoAssistantModuleController
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
             . '<div class="stat"><span class="muted">AI memory runs</span><strong>' . $stats['aiRuns'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Apply history</span><strong>' . $stats['applyHistory'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Impact evaluations</span><strong>' . $stats['impactEvaluations'] . '</strong></div>'
             . '</div>';
     }
 
@@ -1120,6 +1129,46 @@ final class SeoAssistantModuleController
             . '<td>' . $result . '</td>'
             . '<td>' . nl2br($this->escape($this->shorten((string)($row['summary'] ?? ''), 180))) . '</td>'
             . '<td><a class="button" href="?downloadApplyHistory=' . (int)($row['uid'] ?? 0) . '">Download history</a></td>'
+            . '</tr>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $evaluations
+     */
+    private function renderImpactEvaluationsTable(array $evaluations): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Impact</th><th>Recommendation</th><th>Page</th><th>Windows</th><th>Metrics</th><th>AI Summary</th>'
+            . '</tr></thead><tbody>'
+            . ($evaluations === [] ? '<tr><td colspan="7" class="muted">No impact evaluations yet. Run <code>vendor/bin/typo3 seo:recommendations:evaluate-impact --sync</code> after applied changes are at least 35 days old.</td></tr>' : '')
+            . implode('', array_map($this->renderImpactEvaluationRow(...), $evaluations))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderImpactEvaluationRow(array $row): string
+    {
+        $beforeWindow = $this->formatDate((int)($row['before_from'] ?? 0)) . ' - ' . $this->formatDate((int)($row['before_to'] ?? 0));
+        $afterWindow = $this->formatDate((int)($row['after_from'] ?? 0)) . ' - ' . $this->formatDate((int)($row['after_to'] ?? 0));
+        $metrics = 'Clicks ' . $this->formatNumber((float)($row['before_clicks'] ?? 0)) . ' -> ' . $this->formatNumber((float)($row['after_clicks'] ?? 0))
+            . ' (' . $this->formatSignedNumber((float)($row['clicks_delta'] ?? 0)) . ')<br>'
+            . 'Impr. ' . $this->formatNumber((float)($row['before_impressions'] ?? 0)) . ' -> ' . $this->formatNumber((float)($row['after_impressions'] ?? 0))
+            . ' (' . $this->formatSignedNumber((float)($row['impressions_delta'] ?? 0)) . ')<br>'
+            . 'CTR ' . $this->formatPercent((float)($row['before_ctr'] ?? 0)) . ' -> ' . $this->formatPercent((float)($row['after_ctr'] ?? 0))
+            . ' (' . $this->formatSignedPercent((float)($row['ctr_delta'] ?? 0)) . ')<br>'
+            . 'Pos. ' . $this->formatNumber((float)($row['before_position'] ?? 0), 1) . ' -> ' . $this->formatNumber((float)($row['after_position'] ?? 0), 1)
+            . ' (' . $this->formatSignedNumber((float)($row['position_delta'] ?? 0), 1) . ')';
+
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['impact_status'] ?? '')) . '</span><br><span class="muted">' . $this->escape((string)($row['confidence'] ?? '')) . '</span></td>'
+            . '<td>#' . (int)($row['recommendation_uid'] ?? 0) . '<br><span class="muted">Applied ' . $this->escape($this->formatDate((int)($row['applied_at'] ?? 0))) . '</span></td>'
+            . '<td class="url">' . $this->renderUrl((string)($row['page_url'] ?? '')) . '<br><span class="muted">' . $this->escape((string)($row['query_text'] ?? '')) . '</span></td>'
+            . '<td><span class="muted">Before</span><br>' . $this->escape($beforeWindow) . '<br><span class="muted">After</span><br>' . $this->escape($afterWindow) . '</td>'
+            . '<td>' . $metrics . '</td>'
+            . '<td>' . nl2br($this->escape((string)($row['ai_summary'] ?? ''))) . '<br><span class="muted">' . nl2br($this->escape((string)($row['ai_next_action'] ?? ''))) . '</span></td>'
             . '</tr>';
     }
 

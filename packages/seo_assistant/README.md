@@ -29,6 +29,7 @@ vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot
 vendor/bin/typo3 seo:recommendations:generate
 vendor/bin/typo3 seo:recommendations:verify --all
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
 ```
 
 Use `--dry-run` on sync/snapshot commands to see what would be processed without writing rows.
@@ -96,7 +97,9 @@ structured-data suggestions.
 Every backend or CLI write run is recorded in `tx_seoassistant_apply_history`. The backend module
 shows the latest apply history entries with counts for applied, already implemented, skipped and
 failed recommendations. Each entry has a `Download history` button that exports a Markdown audit
-document with the per-recommendation result rows and raw JSON result.
+document with the per-recommendation result rows and raw JSON result. Skipped manual/template
+recommendations include current CMS/rendered frontend state and the proposed target change, so the
+download can be used as a local Codex brief before committing template changes.
 
 The same backend area also has a `Generate fresh recommendations` button. It runs the equivalent of
 the page snapshot, rendered snapshot and recommendation generation commands with configurable
@@ -131,6 +134,18 @@ implemented. It hides rows when the current TYPO3 metadata already matches, sugg
 already visible, image alt text is already stored on matching file references, or the requested
 JSON-LD type is already present in the latest rendered snapshot.
 
+Applied recommendation impact can be evaluated after enough Search Console data exists:
+
+```bash
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
+```
+
+The default evaluation is intentionally delayed and conservative: it compares 28 days before the
+apply date with 28 days after a 7-day buffer, so a recommendation becomes eligible after at least
+35 days. The command stores clicks, impressions, CTR, average position, exact date windows, a
+rule-based status, and an optional OpenAI explanation in `tx_seoassistant_impact_evaluation`.
+Rows are shown in `Web > SEO Assistant` under `Impact Evaluations`.
+
 Structured-data recommendations are stored in `tx_seoassistant_structured_data` and rendered by the
 site package JSON-LD renderer. After deploying this feature, run TYPO3 extension setup/database
-analysis once so the structured-data and apply-history tables exist.
+analysis once so the structured-data, apply-history and impact-evaluation tables exist.

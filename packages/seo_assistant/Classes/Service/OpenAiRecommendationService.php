@@ -36,6 +36,104 @@ final class OpenAiRecommendationService
 
     /**
      * @param array<string,mixed> $context
+     * @return array{impact_status:string,confidence:string,summary:string,next_action:string}|null
+     */
+    public function evaluateImpact(array $context): ?array
+    {
+        if (!$this->isConfigured()) {
+            return null;
+        }
+
+        try {
+            $response = $this->requestFactory->request(
+                $this->configuration->getOpenAiResponsesUrl(),
+                'POST',
+                [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $this->configuration->getOpenAiApiKey(),
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                    ],
+                    'json' => [
+                        'model' => $this->configuration->getOpenAiModel(),
+                        'instructions' => implode(' ', [
+                            'Du bist ein AI SEO Analyst fuer eine deutsche TYPO3 Webagentur.',
+                            'Bewerte nur, ob eine bereits umgesetzte SEO-Empfehlung anhand der gelieferten Google Search Console Vergleichsfenster wahrscheinlich geholfen hat.',
+                            'Beachte die konkreten Datumsbereiche, den Puffer nach Umsetzung und die Datenmenge.',
+                            'Uebertreibe nicht: Wenn Impressionen oder Klicks zu niedrig sind, waehle not_enough_data.',
+                            'Wenn die Daten gemischt oder schwach sind, waehle neutral statt improved oder declined.',
+                            'Keine Ranking-Garantien und keine erfundenen Zahlen.',
+                            'Antworte kurz auf Deutsch.',
+                        ]),
+                        'input' => [
+                            [
+                                'role' => 'user',
+                                'content' => [
+                                    [
+                                        'type' => 'input_text',
+                                        'text' => json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'text' => [
+                            'format' => [
+                                'type' => 'json_schema',
+                                'name' => 'seo_impact_evaluation',
+                                'strict' => true,
+                                'schema' => [
+                                    'type' => 'object',
+                                    'additionalProperties' => false,
+                                    'required' => ['impact_status', 'confidence', 'summary', 'next_action'],
+                                    'properties' => [
+                                        'impact_status' => [
+                                            'type' => 'string',
+                                            'enum' => ['improved', 'neutral', 'declined', 'not_enough_data'],
+                                        ],
+                                        'confidence' => [
+                                            'type' => 'string',
+                                            'enum' => ['low', 'medium', 'high'],
+                                        ],
+                                        'summary' => [
+                                            'type' => 'string',
+                                        ],
+                                        'next_action' => [
+                                            'type' => 'string',
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            'verbosity' => 'low',
+                        ],
+                        'max_output_tokens' => 900,
+                    ],
+                    'timeout' => 30,
+                ]
+            );
+
+            $payload = json_decode((string)$response->getBody(), true);
+            if (!is_array($payload)) {
+                return null;
+            }
+
+            $outputText = $this->extractOutputText($payload);
+            if ($outputText === '') {
+                return null;
+            }
+
+            $data = json_decode($outputText, true);
+            if (!is_array($data)) {
+                return null;
+            }
+
+            return $this->normalizeImpactEvaluation($data);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $context
      * @return list<array{recommendation_type:string,action_type:string,action_payload:array<string,mixed>,query_text:string,issue:string,recommendation:string,proposed_seo_title:string,proposed_description:string,priority:int}>
      */
     public function createRecommendations(array $context, int $maxRecommendations = 3): array
@@ -325,6 +423,30 @@ final class OpenAiRecommendationService
         }
 
         return $recommendations;
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     * @return array{impact_status:string,confidence:string,summary:string,next_action:string}|null
+     */
+    private function normalizeImpactEvaluation(array $data): ?array
+    {
+        $status = (string)($data['impact_status'] ?? '');
+        if (!in_array($status, ['improved', 'neutral', 'declined', 'not_enough_data'], true)) {
+            return null;
+        }
+
+        $confidence = (string)($data['confidence'] ?? 'low');
+        if (!in_array($confidence, ['low', 'medium', 'high'], true)) {
+            $confidence = 'low';
+        }
+
+        return [
+            'impact_status' => $status,
+            'confidence' => $confidence,
+            'summary' => mb_substr(trim((string)($data['summary'] ?? '')), 0, 2000),
+            'next_action' => mb_substr(trim((string)($data['next_action'] ?? '')), 0, 2000),
+        ];
     }
 
     /**

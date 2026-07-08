@@ -139,7 +139,9 @@ and dynamic structured-data rows.
 Every write run from the backend or CLI is stored in `tx_seoassistant_apply_history`. The backend
 module shows the latest history entries and each row has a `Download history` button. The exported
 Markdown file contains the apply summary, per-recommendation statuses, messages and the raw result
-JSON, so live and local runs each keep their own auditable record.
+JSON, so live and local runs each keep their own auditable record. Manual/template recommendations
+also include the current CMS/rendered frontend state and the recommended target state, making the
+download usable as a local implementation brief before pushing code through CI/CD.
 
 The backend also has a `Generate fresh recommendations` button. It runs page snapshot, rendered
 snapshot and AI recommendation generation from the module with editable limits, so fresh suggestions
@@ -176,6 +178,27 @@ vendor/bin/typo3 seo:recommendations:verify --all --refresh
 The `--refresh` option re-runs a rendered snapshot for the affected URL before comparing applied
 metadata or image alt text with the current frontend HTML.
 
+## Impact evaluation
+
+Impact evaluation checks whether applied recommendations appear to work after enough Search Console
+data exists:
+
+```bash
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
+```
+
+Defaults:
+
+- minimum age: 35 days after apply
+- before window: 28 days before apply
+- buffer: first 7 days after apply are ignored
+- after window: 28 days after the buffer
+
+The command stores exact dates, clicks, impressions, CTR, average position, rule-based impact and
+optional OpenAI analysis in `tx_seoassistant_impact_evaluation`. If the after-window is not complete
+yet, the recommendation stays pending. If impressions are too low, the result is `not_enough_data`
+instead of a premature success/failure judgment.
+
 The recommendation table hides rows that are already implemented. The check uses TYPO3 page
 metadata, visible content text, matched file-reference alt text, and the latest rendered JSON-LD
 snapshot where applicable. Bulk apply also marks already satisfied recommendations as implemented
@@ -184,7 +207,8 @@ instead of writing them again.
 Dynamic structured data is stored in `tx_seoassistant_structured_data` and rendered through the
 site-package JSON-LD renderer. After deploying a version that adds this table, run TYPO3 extension
 setup/database analysis once on the target environment. The same setup step creates
-`tx_seoassistant_apply_history` for downloadable apply history.
+`tx_seoassistant_apply_history` for downloadable apply history and
+`tx_seoassistant_impact_evaluation` for delayed impact checks.
 
 ## Suggested cron
 
@@ -196,8 +220,9 @@ vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
-vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=10
+vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5
 vendor/bin/typo3 seo:recommendations:verify --all
+vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
 ```
 
 The rendered snapshot command crawls only the configured same-host URLs. It uses CMS page snapshots and Search Console page URLs as its source list.
