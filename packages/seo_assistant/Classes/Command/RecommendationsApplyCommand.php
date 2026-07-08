@@ -69,6 +69,8 @@ final class RecommendationsApplyCommand extends Command
             ['Content UID' => $result['contentUid'] > 0 ? (string)$result['contentUid'] : '-'],
             ['Content status' => $result['contentHeader'] !== '' ? ($result['contentHidden'] ? 'hidden draft' : 'published') : '-'],
             ['Content header' => $result['contentHeader'] !== '' ? $result['contentHeader'] : '-'],
+            ['Image alt updated' => (string)($result['imageAltUpdated'] ?? 0)],
+            ['Image alt skipped' => (string)($result['imageAltSkipped'] ?? 0)],
         );
 
         if ($result['dryRun']) {

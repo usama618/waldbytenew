@@ -19,7 +19,7 @@ final class RecommendationApplyService
     ) {}
 
     /**
-     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string}
+     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string,imageAltUpdated:int,imageAltSkipped:int}
      */
     public function apply(
         int $recommendationUid,
@@ -64,12 +64,16 @@ final class RecommendationApplyService
             );
         }
 
+        if ($actionType === 'image_alt_suggestion') {
+            return $this->applyImageAltRecommendation($recommendationUid, $pageUid, $recommendation, $action, $dryRun, $force);
+        }
+
         throw new RuntimeException('Recommendation action "' . $actionType . '" is manual and cannot be applied automatically.', 1760000045);
     }
 
     /**
      * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
-     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string}
+     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string,imageAltUpdated:int,imageAltSkipped:int}
      */
     private function applyMetadataRecommendation(int $recommendationUid, int $pageUid, array $action, bool $dryRun, bool $force): array
     {
@@ -164,13 +168,15 @@ final class RecommendationApplyService
             'contentUid' => 0,
             'contentHidden' => false,
             'contentHeader' => '',
+            'imageAltUpdated' => 0,
+            'imageAltSkipped' => 0,
         ];
     }
 
     /**
      * @param array<string,mixed> $recommendation
      * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
-     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string}
+     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string,imageAltUpdated:int,imageAltSkipped:int}
      */
     private function applyContentGapRecommendation(
         int $recommendationUid,
@@ -286,6 +292,136 @@ final class RecommendationApplyService
             'contentUid' => $contentUid,
             'contentHidden' => $contentHidden,
             'contentHeader' => $contentDraft['header'],
+            'imageAltUpdated' => 0,
+            'imageAltSkipped' => 0,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
+     * @return array{uid:int,pageUid:int,actionType:string,applyCapability:string,seoTitle:string,description:string,changedFields:list<string>,dryRun:bool,contentUid:int,contentHidden:bool,contentHeader:string,imageAltUpdated:int,imageAltSkipped:int}
+     */
+    private function applyImageAltRecommendation(int $recommendationUid, int $pageUid, array $recommendation, array $action, bool $dryRun, bool $force): array
+    {
+        $applyCapability = $action['applyCapability'];
+        if (!$force && $applyCapability !== 'image_alt') {
+            throw new RuntimeException('Recommendation apply capability "' . $applyCapability . '" is not enabled for image alt automation.', 1760000054);
+        }
+
+        $suggestions = $this->imageAltSuggestions($action['payload']['image_alt_suggestions'] ?? []);
+        if ($suggestions === []) {
+            throw new RuntimeException('Recommendation has no usable image alt suggestions.', 1760000055);
+        }
+
+        $references = $this->fetchImageReferencesForPage($pageUid);
+        if ($references === []) {
+            throw new RuntimeException('No TYPO3 file references were found for this page.', 1760000056);
+        }
+
+        $matches = [];
+        $skipped = [];
+        foreach ($suggestions as $suggestion) {
+            $matchedReferences = $this->matchImageReferences($suggestion['src'], $references);
+            if (count($matchedReferences) !== 1) {
+                $skipped[] = [
+                    'src' => $suggestion['src'],
+                    'alt_text' => $suggestion['alt_text'],
+                    'reason' => count($matchedReferences) === 0 ? 'No matching sys_file_reference found.' : 'Multiple matching sys_file_reference rows found.',
+                ];
+                continue;
+            }
+
+            $reference = $matchedReferences[0];
+            $matches[] = [
+                'reference_uid' => (int)$reference['reference_uid'],
+                'file_uid' => (int)$reference['file_uid'],
+                'src' => $suggestion['src'],
+                'identifier' => (string)($reference['identifier'] ?? ''),
+                'filename' => (string)($reference['filename'] ?? ''),
+                'fieldname' => (string)($reference['fieldname'] ?? ''),
+                'tablenames' => (string)($reference['tablenames'] ?? ''),
+                'uid_foreign' => (int)($reference['uid_foreign'] ?? 0),
+                'before' => (string)($reference['alternative'] ?? ''),
+                'after' => $suggestion['alt_text'],
+                'reason' => $suggestion['reason'],
+            ];
+        }
+
+        if ($matches === []) {
+            throw new RuntimeException('No image alt suggestions could be matched safely. Skipped ' . count($skipped) . ' suggestion(s).', 1760000057);
+        }
+
+        if (!$dryRun) {
+            $connection = $this->connectionPool->getConnectionForTable('sys_file_reference');
+            $columns = $connection->getSchemaInformation()->listTableColumnNames('sys_file_reference');
+            if (!in_array('alternative', $columns, true)) {
+                throw new RuntimeException('sys_file_reference is missing the alternative column.', 1760000058);
+            }
+
+            foreach ($matches as $match) {
+                $data = [
+                    'alternative' => $match['after'],
+                ];
+                $types = [];
+                if (in_array('tstamp', $columns, true)) {
+                    $data['tstamp'] = time();
+                    $types['tstamp'] = Connection::PARAM_INT;
+                }
+
+                $connection->update(
+                    'sys_file_reference',
+                    $data,
+                    ['uid' => (int)$match['reference_uid']],
+                    $types
+                );
+            }
+
+            $appliedChanges = [
+                'action_type' => $action['actionType'],
+                'apply_capability' => $applyCapability,
+                'page_uid' => $pageUid,
+                'updated_references' => $matches,
+                'skipped_suggestions' => $skipped,
+            ];
+
+            $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+                ->update(
+                    self::RECOMMENDATION_TABLE,
+                    [
+                        'page_uid' => $pageUid,
+                        'status' => 'applied',
+                        'applied_changes_json' => $this->json($appliedChanges),
+                        'verification_status' => 'pending',
+                        'verification_json' => '',
+                        'applied_at' => time(),
+                        'verified_at' => 0,
+                        'tstamp' => time(),
+                    ],
+                    ['uid' => $recommendationUid],
+                    [
+                        'page_uid' => Connection::PARAM_INT,
+                        'applied_at' => Connection::PARAM_INT,
+                        'verified_at' => Connection::PARAM_INT,
+                        'tstamp' => Connection::PARAM_INT,
+                    ]
+                );
+        }
+
+        return [
+            'uid' => $recommendationUid,
+            'pageUid' => $pageUid,
+            'actionType' => $action['actionType'],
+            'applyCapability' => $applyCapability,
+            'seoTitle' => '',
+            'description' => '',
+            'changedFields' => ['sys_file_reference.alternative'],
+            'dryRun' => $dryRun,
+            'contentUid' => 0,
+            'contentHidden' => false,
+            'contentHeader' => '',
+            'imageAltUpdated' => count($matches),
+            'imageAltSkipped' => count($skipped),
         ];
     }
 
@@ -331,6 +467,13 @@ final class RecommendationApplyService
             )
         ) {
             $applyCapability = 'content_draft';
+        }
+        if (
+            ($applyCapability === '' || $applyCapability === 'manual')
+            && $actionType === 'image_alt_suggestion'
+            && $this->imageAltSuggestions($payload['image_alt_suggestions'] ?? []) !== []
+        ) {
+            $applyCapability = 'image_alt';
         }
 
         return [
@@ -454,6 +597,172 @@ final class RecommendationApplyService
         }
 
         return 'Ergaenzender SEO-Inhalt';
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<array{src:string,alt_text:string,reason:string}>
+     */
+    private function imageAltSuggestions($items): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $suggestions = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $src = trim((string)($item['src'] ?? ''));
+            $altText = mb_substr($this->cleanText((string)($item['alt_text'] ?? '')), 0, 255);
+            if ($src === '' || $altText === '') {
+                continue;
+            }
+            $suggestions[] = [
+                'src' => $src,
+                'alt_text' => $altText,
+                'reason' => mb_substr($this->cleanText((string)($item['reason'] ?? '')), 0, 260),
+            ];
+            if (count($suggestions) >= 12) {
+                break;
+            }
+        }
+
+        return $suggestions;
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function fetchImageReferencesForPage(int $pageUid): array
+    {
+        $contentUids = $this->fetchPageContentUids($pageUid);
+        $connection = $this->connectionPool->getConnectionForTable('sys_file_reference');
+        $columns = $connection->getSchemaInformation()->listTableColumnNames('sys_file_reference');
+        foreach (['uid', 'uid_local', 'uid_foreign', 'tablenames'] as $requiredColumn) {
+            if (!in_array($requiredColumn, $columns, true)) {
+                return [];
+            }
+        }
+
+        $fileConnection = $this->connectionPool->getConnectionForTable('sys_file');
+        $fileColumns = $fileConnection->getSchemaInformation()->listTableColumnNames('sys_file');
+        if (!in_array('uid', $fileColumns, true) || !in_array('identifier', $fileColumns, true)) {
+            return [];
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $select = [
+            'ref.uid AS reference_uid',
+            'ref.uid_local AS file_uid',
+            'ref.uid_foreign',
+            'ref.tablenames',
+            'file.identifier',
+        ];
+        foreach (['fieldname', 'alternative', 'title'] as $column) {
+            if (in_array($column, $columns, true)) {
+                $select[] = 'ref.' . $column;
+            }
+        }
+        if (in_array('name', $fileColumns, true)) {
+            $select[] = 'file.name AS filename';
+        }
+
+        $conditions = ['(ref.tablenames = :pagesTable AND ref.uid_foreign = :pageUid)'];
+        if ($contentUids !== []) {
+            $conditions[] = '(ref.tablenames = :contentTable AND ' . $queryBuilder->expr()->in('ref.uid_foreign', ':contentUids') . ')';
+            $queryBuilder->setParameter('contentUids', $contentUids, Connection::PARAM_INT_ARRAY);
+        }
+
+        $queryBuilder
+            ->selectLiteral(...$select)
+            ->from('sys_file_reference', 'ref')
+            ->join('ref', 'sys_file', 'file', 'file.uid = ref.uid_local')
+            ->where('(' . implode(' OR ', $conditions) . ')')
+            ->setParameter('pagesTable', 'pages')
+            ->setParameter('contentTable', self::CONTENT_TABLE)
+            ->setParameter('pageUid', $pageUid, Connection::PARAM_INT);
+
+        if (in_array('deleted', $columns, true)) {
+            $queryBuilder->andWhere('ref.deleted = 0');
+        }
+        if (in_array('hidden', $columns, true)) {
+            $queryBuilder->andWhere('ref.hidden = 0');
+        }
+
+        return $queryBuilder->executeQuery()->fetchAllAssociative();
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function fetchPageContentUids(int $pageUid): array
+    {
+        $connection = $this->connectionPool->getConnectionForTable(self::CONTENT_TABLE);
+        $columns = $connection->getSchemaInformation()->listTableColumnNames(self::CONTENT_TABLE);
+        if (!in_array('uid', $columns, true) || !in_array('pid', $columns, true)) {
+            return [];
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $queryBuilder
+            ->select('uid')
+            ->from(self::CONTENT_TABLE)
+            ->where('pid = :pid')
+            ->setParameter('pid', $pageUid, Connection::PARAM_INT);
+
+        if (in_array('deleted', $columns, true)) {
+            $queryBuilder->andWhere('deleted = 0');
+        }
+        if (in_array('hidden', $columns, true)) {
+            $queryBuilder->andWhere('hidden = 0');
+        }
+        if (in_array('sys_language_uid', $columns, true)) {
+            $queryBuilder->andWhere('sys_language_uid IN (0, -1)');
+        }
+
+        return array_values(array_filter(array_map('intval', $queryBuilder->executeQuery()->fetchFirstColumn())));
+    }
+
+    /**
+     * @param list<array<string,mixed>> $references
+     * @return list<array<string,mixed>>
+     */
+    private function matchImageReferences(string $src, array $references): array
+    {
+        $srcPath = rawurldecode((string)(parse_url($src, PHP_URL_PATH) ?: $src));
+        $srcPathLower = mb_strtolower($srcPath);
+        $srcBasename = mb_strtolower((string)basename($srcPath));
+        $srcBasenameWithoutProcessedPrefix = preg_replace('/^csm_/', '', $srcBasename) ?? $srcBasename;
+
+        $matches = [];
+        foreach ($references as $reference) {
+            $identifier = rawurldecode((string)($reference['identifier'] ?? ''));
+            $filename = (string)($reference['filename'] ?? basename($identifier));
+            $identifierLower = mb_strtolower($identifier);
+            $filenameLower = mb_strtolower($filename);
+            $filenameStem = mb_strtolower((string)pathinfo($filename, PATHINFO_FILENAME));
+
+            if ($filenameLower !== '' && ($srcBasename === $filenameLower || $srcBasenameWithoutProcessedPrefix === $filenameLower)) {
+                $matches[] = $reference;
+                continue;
+            }
+            if ($filenameStem !== '' && str_contains($srcBasenameWithoutProcessedPrefix, $filenameStem)) {
+                $matches[] = $reference;
+                continue;
+            }
+            if ($identifierLower !== '' && str_contains($srcPathLower, $identifierLower)) {
+                $matches[] = $reference;
+            }
+        }
+
+        $unique = [];
+        foreach ($matches as $match) {
+            $unique[(int)($match['reference_uid'] ?? 0)] = $match;
+        }
+
+        return array_values($unique);
     }
 
     /**

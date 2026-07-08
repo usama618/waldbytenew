@@ -54,10 +54,17 @@ When OpenAI is configured, `seo:recommendations:generate` uses AI-first generati
 
 AI generation stores compact run memory in the database and keeps the latest 10 runs. Each new AI run receives those summaries as context so it can avoid repeating the same work.
 
+In the backend module, every AI memory run has a `Download suggestions` button. It downloads a
+Markdown document for that run with analyzed pages, AI recommendations, content drafts, metadata
+commands, image alt/link/schema suggestions, and local DDEV workflow notes. Use that file as the
+handoff document for local TYPO3 testing before committing template/schema/content changes and
+deploying through CI/CD.
+
 Recommendations are stored as drafts with a typed action payload. Rows marked with
 `apply_capability=safe_metadata` update page metadata. Rows marked with
 `apply_capability=content_draft` can create a TYPO3 `tt_content` element, using the site's
-`seo_text` CType by default. Internal link, image alt, structured data and technical indexing
+`seo_text` CType by default. Rows marked with `apply_capability=image_alt` update matched TYPO3
+`sys_file_reference.alternative` values. Internal link, structured data and technical indexing
 actions still stay manual review items.
 
 Applying a recommendation is intentionally explicit:
@@ -81,7 +88,8 @@ vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes --publish-content
 ```
 
 The command records the applied field values or inserted content UID. After applying metadata,
-refresh the rendered snapshot and verify that the frontend HTML contains the change:
+image alt text, or published content, refresh the rendered snapshot and verify that the frontend
+HTML contains the change:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh

@@ -553,7 +553,32 @@ final class RecommendationService
             return 'content_draft';
         }
 
+        if (
+            $actionType === 'image_alt_suggestion'
+            && $this->hasImageAltSuggestions($payload)
+        ) {
+            return 'image_alt';
+        }
+
         return 'manual';
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function hasImageAltSuggestions(array $payload): bool
+    {
+        foreach ((array)($payload['image_alt_suggestions'] ?? []) as $suggestion) {
+            if (
+                is_array($suggestion)
+                && trim((string)($suggestion['src'] ?? '')) !== ''
+                && trim((string)($suggestion['alt_text'] ?? '')) !== ''
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

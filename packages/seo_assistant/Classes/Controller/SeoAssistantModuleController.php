@@ -7,6 +7,7 @@ namespace App\SeoAssistant\Controller;
 use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\HtmlResponse;
 
@@ -26,6 +27,11 @@ final class SeoAssistantModuleController
 
     public function handleRequest(ServerRequestInterface $request): ResponseInterface
     {
+        $downloadRunUid = (int)($request->getQueryParams()['downloadAiRun'] ?? 0);
+        if ($downloadRunUid > 0) {
+            return $this->downloadAiRunDocument($downloadRunUid);
+        }
+
         return new HtmlResponse($this->render());
     }
 
@@ -64,6 +70,8 @@ final class SeoAssistantModuleController
             . '.pill-critical{background:#fee2e2;color:#991b1b;}'
             . '.pill-warning{background:#fef3c7;color:#92400e;}'
             . '.pill-notice{background:#e0f2fe;color:#075985;}'
+            . '.button{display:inline-block;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#1f2933;padding:5px 8px;text-decoration:none;font-size:12px;}'
+            . '.button:hover{background:#eef1f4;}'
             . '.issues{display:flex;gap:5px;flex-wrap:wrap;}'
             . 'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:normal;}'
             . '</style></head><body>'
@@ -125,6 +133,412 @@ final class SeoAssistantModuleController
             . '<p>Missing tables:</p><ul>'
             . implode('', array_map(fn(string $table): string => '<li class="missing">' . $this->escape($table) . '</li>', $missingTables))
             . '</ul></div></body></html>';
+    }
+
+    private function downloadAiRunDocument(int $runUid): ResponseInterface
+    {
+        $missingTables = $this->findMissingTables();
+        if ($missingTables !== []) {
+            return new HtmlResponse($this->renderMissingTables($missingTables), 503);
+        }
+
+        $run = $this->fetchAiRunByUid($runUid);
+        if ($run === null) {
+            return new HtmlResponse('AI run not found.', 404, ['Content-Type' => 'text/plain; charset=utf-8']);
+        }
+
+        $recommendations = $this->fetchRecommendationsForAiRun($run);
+        $document = $this->buildAiRunSuggestionsDocument($run, $recommendations);
+        $filename = 'seo-assistant-run-' . $runUid . '-' . date('Ymd-His', (int)($run['crdate'] ?? time())) . '.md';
+
+        return new HtmlResponse($document, 200, [
+            'Content-Type' => 'text/markdown; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function fetchAiRunByUid(int $runUid): ?array
+    {
+        $row = $this->connectionPool->getConnectionForTable(self::AI_RUN_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::AI_RUN_TABLE)
+            ->where('uid = :uid')
+            ->setParameter('uid', $runUid, Connection::PARAM_INT)
+            ->executeQuery()
+            ->fetchAssociative();
+
+        return is_array($row) ? $row : null;
+    }
+
+    /**
+     * @param array<string,mixed> $run
+     * @return list<array<string,mixed>>
+     */
+    private function fetchRecommendationsForAiRun(array $run): array
+    {
+        $context = $this->decodeJson((string)($run['context_json'] ?? '{}'));
+        $contextRecommendations = array_values(array_filter((array)($context['recommendations'] ?? []), 'is_array'));
+        $urls = $this->extractRunUrls($context);
+        if ($urls === []) {
+            return $contextRecommendations;
+        }
+
+        $connection = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE);
+        $queryBuilder = $connection->createQueryBuilder();
+        $queryBuilder
+            ->select('*')
+            ->from(self::RECOMMENDATION_TABLE)
+            ->where($queryBuilder->expr()->in('page_url', ':pageUrls'))
+            ->setParameter('pageUrls', $urls, Connection::PARAM_STR_ARRAY)
+            ->orderBy('priority', 'DESC')
+            ->addOrderBy('tstamp', 'DESC')
+            ->setMaxResults(250);
+
+        $model = (string)($run['model'] ?? '');
+        if ($model !== '') {
+            $queryBuilder
+                ->andWhere('ai_model = :aiModel')
+                ->setParameter('aiModel', $model);
+        }
+
+        $rows = $queryBuilder->executeQuery()->fetchAllAssociative();
+        $matchingKeys = $this->buildRunRecommendationKeys($contextRecommendations);
+        if ($matchingKeys === []) {
+            return $rows;
+        }
+
+        $matchingRows = [];
+        foreach ($rows as $row) {
+            if (isset($matchingKeys[$this->recommendationMatchKey($row)])) {
+                $matchingRows[] = $row;
+            }
+        }
+
+        return $matchingRows !== [] ? $matchingRows : $contextRecommendations;
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     * @return list<string>
+     */
+    private function extractRunUrls(array $context): array
+    {
+        $urls = [];
+        foreach ((array)($context['pages'] ?? []) as $page) {
+            if (is_array($page) && (string)($page['page_url'] ?? '') !== '') {
+                $urls[] = (string)$page['page_url'];
+            }
+        }
+        foreach ((array)($context['recommendations'] ?? []) as $recommendation) {
+            if (is_array($recommendation) && (string)($recommendation['page_url'] ?? '') !== '') {
+                $urls[] = (string)$recommendation['page_url'];
+            }
+        }
+
+        return array_values(array_unique($urls));
+    }
+
+    /**
+     * @param list<array<string,mixed>> $recommendations
+     * @return array<string,bool>
+     */
+    private function buildRunRecommendationKeys(array $recommendations): array
+    {
+        $keys = [];
+        foreach ($recommendations as $recommendation) {
+            $keys[$this->recommendationMatchKey($recommendation)] = true;
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     */
+    private function recommendationMatchKey(array $recommendation): string
+    {
+        return implode('|', [
+            $this->urlNormalizer->normalize((string)($recommendation['page_url'] ?? '')),
+            (string)($recommendation['recommendation_type'] ?? $recommendation['type'] ?? ''),
+            (string)($recommendation['query_text'] ?? $recommendation['query'] ?? ''),
+        ]);
+    }
+
+    /**
+     * @param array<string,mixed> $run
+     * @param list<array<string,mixed>> $recommendations
+     */
+    private function buildAiRunSuggestionsDocument(array $run, array $recommendations): string
+    {
+        $context = $this->decodeJson((string)($run['context_json'] ?? '{}'));
+        $runUid = (int)($run['uid'] ?? 0);
+        $lines = [
+            '# SEO Assistant Suggestions - Run ' . $runUid,
+            '',
+            '- Date: ' . date('Y-m-d H:i', (int)($run['crdate'] ?? 0)),
+            '- Model: ' . (string)($run['model'] ?? ''),
+            '- Mode: ' . (string)($run['mode'] ?? ''),
+            '- Pages analyzed: ' . (int)($run['pages_analyzed'] ?? 0),
+            '- Recommendations generated: ' . (int)($run['recommendations_generated'] ?? 0),
+            '- Recommendations stored: ' . (int)($run['recommendations_stored'] ?? 0),
+            '- Focus: ' . (string)($run['focus_summary'] ?? ''),
+            '',
+            '## Local Workflow',
+            '',
+            '1. Use this document in the local TYPO3/DDEV installation.',
+            '2. Apply safe metadata/content draft recommendations locally first when possible.',
+            '3. For template, JSON-LD, image alt and internal link suggestions, make code or content changes locally.',
+            '4. Run local checks and frontend review.',
+            '5. Commit the tested changes and deploy through the CI/CD pipeline.',
+            '',
+            'Useful local commands:',
+            '',
+            '```bash',
+            'ddev typo3 cache:flush',
+            'ddev typo3 seo:pages:snapshot --base-url=https://newhobby.ddev.site/',
+            'ddev typo3 seo:rendered:snapshot --base-url=https://newhobby.ddev.site/',
+            'ddev typo3 seo:recommendations:verify --all --refresh',
+            '```',
+            '',
+            '## Pages Analyzed',
+            '',
+        ];
+
+        foreach ((array)($context['pages'] ?? []) as $page) {
+            if (!is_array($page)) {
+                continue;
+            }
+            $lines[] = '- ' . (string)($page['page_url'] ?? '');
+            $lines[] = '  - Page UID: ' . (int)($page['page_uid'] ?? 0);
+            $issueCodes = array_values(array_filter((array)($page['rendered_issue_codes'] ?? [])));
+            if ($issueCodes !== []) {
+                $lines[] = '  - Rendered issues: ' . implode(', ', array_map('strval', $issueCodes));
+            }
+            $queries = array_values(array_filter((array)($page['top_queries'] ?? []), 'is_array'));
+            if ($queries !== []) {
+                $lines[] = '  - Top queries:';
+                foreach ($queries as $query) {
+                    $lines[] = '    - ' . (string)($query['query'] ?? '') . ' | impressions '
+                        . $this->formatNumber((float)($query['impressions'] ?? 0)) . ' | position '
+                        . $this->formatNumber((float)($query['position'] ?? 0), 1);
+                }
+            }
+        }
+
+        $lines[] = '';
+        $lines[] = '## Recommendations';
+        $lines[] = '';
+
+        if ($recommendations === []) {
+            $lines[] = 'No recommendations were stored for this run.';
+        }
+
+        foreach ($recommendations as $recommendation) {
+            $lines = array_merge($lines, $this->renderRecommendationMarkdown($recommendation));
+        }
+
+        return rtrim(implode("\n", $lines)) . "\n";
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @return list<string>
+     */
+    private function renderRecommendationMarkdown(array $recommendation): array
+    {
+        $payload = $this->decodeJson((string)($recommendation['action_payload_json'] ?? '{}'));
+        $uid = (int)($recommendation['uid'] ?? 0);
+        $type = (string)($recommendation['recommendation_type'] ?? $recommendation['type'] ?? 'recommendation');
+        $actionType = (string)($recommendation['action_type'] ?? $recommendation['action'] ?? '');
+        $capability = (string)($recommendation['apply_capability'] ?? '');
+        $pageUrl = (string)($recommendation['page_url'] ?? '');
+        $lines = [
+            '### ' . ($uid > 0 ? 'UID ' . $uid . ' - ' : '') . $type,
+            '',
+            '- Page: ' . $pageUrl,
+            '- Page UID: ' . (int)($recommendation['page_uid'] ?? 0),
+            '- Query: ' . ((string)($recommendation['query_text'] ?? $recommendation['query'] ?? '') ?: '-'),
+            '- Priority: ' . (int)($recommendation['priority'] ?? 0),
+            '- Status: ' . ((string)($recommendation['status'] ?? '') ?: '-'),
+            '- Action type: ' . ($actionType !== '' ? $actionType : '-'),
+            '- Apply capability: ' . ($capability !== '' ? $capability : '-'),
+            '',
+            '**Issue**',
+            '',
+            (string)($recommendation['issue'] ?? ''),
+            '',
+            '**Recommendation**',
+            '',
+            (string)($recommendation['recommendation'] ?? ''),
+            '',
+        ];
+
+        if ((string)($recommendation['proposed_seo_title'] ?? '') !== '' || (string)($recommendation['proposed_description'] ?? '') !== '') {
+            $lines[] = '**Proposed Metadata**';
+            $lines[] = '';
+            if ((string)($recommendation['proposed_seo_title'] ?? '') !== '') {
+                $lines[] = '- SEO title: ' . (string)$recommendation['proposed_seo_title'];
+            }
+            if ((string)($recommendation['proposed_description'] ?? '') !== '') {
+                $lines[] = '- Meta description: ' . (string)$recommendation['proposed_description'];
+            }
+            $lines[] = '';
+        }
+
+        $lines = array_merge($lines, $this->renderActionPayloadMarkdown($payload));
+
+        if ($uid > 0 && in_array($capability, ['safe_metadata', 'content_draft', 'image_alt'], true)) {
+            $lines[] = '**Apply Locally**';
+            $lines[] = '';
+            $lines[] = '```bash';
+            $lines[] = 'ddev typo3 seo:recommendations:apply --uid=' . $uid . ' --yes';
+            if ($capability === 'content_draft') {
+                $lines[] = '# Optional direct publish after review:';
+                $lines[] = 'ddev typo3 seo:recommendations:apply --uid=' . $uid . ' --yes --publish-content';
+            }
+            $lines[] = 'ddev typo3 seo:recommendations:verify --uid=' . $uid . ' --refresh';
+            $lines[] = '```';
+            $lines[] = '';
+        } else {
+            $lines[] = '**Manual Implementation Notes**';
+            $lines[] = '';
+            $lines[] = '- Test this locally before deployment.';
+            $lines[] = '- Template/schema work usually belongs in `packages/site_package/Resources/Private` or `packages/site_package/Classes/Seo/StructuredDataRenderer.php`.';
+            $lines[] = '- Content-only edits can be made in the TYPO3 backend on the local DB and then reproduced on live, or converted into code/template changes when they are reusable.';
+            $lines[] = '';
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return list<string>
+     */
+    private function renderActionPayloadMarkdown(array $payload): array
+    {
+        if ($payload === []) {
+            return [];
+        }
+
+        $lines = [
+            '**Action Payload**',
+            '',
+        ];
+
+        foreach (['target_table', 'target_uid', 'structured_data_type'] as $field) {
+            if ((string)($payload[$field] ?? '') !== '') {
+                $lines[] = '- ' . $field . ': ' . (string)$payload[$field];
+            }
+        }
+
+        if ((string)($payload['content_brief'] ?? '') !== '') {
+            $lines[] = '';
+            $lines[] = 'Content brief:';
+            $lines[] = '';
+            $lines[] = (string)$payload['content_brief'];
+        }
+
+        if ((string)($payload['content_element_header'] ?? '') !== '') {
+            $lines[] = '';
+            $lines[] = 'Content element header:';
+            $lines[] = '';
+            $lines[] = (string)$payload['content_element_header'];
+        }
+
+        if ((string)($payload['content_body_html'] ?? '') !== '') {
+            $lines[] = '';
+            $lines[] = 'Content body HTML:';
+            $lines[] = '';
+            $lines[] = '```html';
+            $lines[] = (string)$payload['content_body_html'];
+            $lines[] = '```';
+        }
+
+        $lines = array_merge($lines, $this->renderStringListMarkdown('Suggested headings', $payload['suggested_headings'] ?? []));
+        $lines = array_merge($lines, $this->renderRowsMarkdown('Suggested links', $payload['suggested_links'] ?? [], ['source_url', 'target_url', 'anchor_text', 'reason']));
+        $lines = array_merge($lines, $this->renderRowsMarkdown('Image alt suggestions', $payload['image_alt_suggestions'] ?? [], ['src', 'alt_text', 'reason']));
+        $lines = array_merge($lines, $this->renderStringListMarkdown('Technical steps', $payload['technical_steps'] ?? []));
+
+        if ((string)($payload['structured_data_preview'] ?? '') !== '') {
+            $lines[] = '';
+            $lines[] = 'Structured data preview or implementation note:';
+            $lines[] = '';
+            $lines[] = '```json';
+            $lines[] = (string)$payload['structured_data_preview'];
+            $lines[] = '```';
+        }
+
+        $lines[] = '';
+
+        return $lines;
+    }
+
+    /**
+     * @param mixed $items
+     * @return list<string>
+     */
+    private function renderStringListMarkdown(string $title, $items): array
+    {
+        if (!is_array($items) || $items === []) {
+            return [];
+        }
+
+        $lines = ['', $title . ':'];
+        foreach ($items as $item) {
+            $item = trim((string)$item);
+            if ($item !== '') {
+                $lines[] = '- ' . $item;
+            }
+        }
+
+        return count($lines) > 2 ? $lines : [];
+    }
+
+    /**
+     * @param mixed $rows
+     * @param list<string> $columns
+     * @return list<string>
+     */
+    private function renderRowsMarkdown(string $title, $rows, array $columns): array
+    {
+        if (!is_array($rows) || $rows === []) {
+            return [];
+        }
+
+        $lines = ['', $title . ':'];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $parts = [];
+            foreach ($columns as $column) {
+                $value = trim((string)($row[$column] ?? ''));
+                if ($value !== '') {
+                    $parts[] = $column . ': ' . $value;
+                }
+            }
+            if ($parts !== []) {
+                $lines[] = '- ' . implode(' | ', $parts);
+            }
+        }
+
+        return count($lines) > 2 ? $lines : [];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decodeJson(string $json): array
+    {
+        $data = json_decode($json, true);
+
+        return is_array($data) ? $data : [];
     }
 
     /**
@@ -324,9 +738,9 @@ final class SeoAssistantModuleController
     private function renderAiRunsTable(array $runs): string
     {
         return '<table><thead><tr>'
-            . '<th>Date</th><th>Model</th><th>Mode</th><th>Pages</th><th>Generated</th><th>Stored</th><th>Focus</th>'
+            . '<th>Date</th><th>Model</th><th>Mode</th><th>Pages</th><th>Generated</th><th>Stored</th><th>Focus</th><th>Document</th>'
             . '</tr></thead><tbody>'
-            . ($runs === [] ? '<tr><td colspan="7" class="muted">No AI runs recorded yet.</td></tr>' : '')
+            . ($runs === [] ? '<tr><td colspan="8" class="muted">No AI runs recorded yet.</td></tr>' : '')
             . implode('', array_map($this->renderAiRunRow(...), $runs))
             . '</tbody></table>';
     }
@@ -388,6 +802,7 @@ final class SeoAssistantModuleController
             . '<td>' . (int)($row['recommendations_generated'] ?? 0) . '</td>'
             . '<td>' . (int)($row['recommendations_stored'] ?? 0) . '</td>'
             . '<td>' . $this->escape((string)($row['focus_summary'] ?? '')) . '</td>'
+            . '<td><a class="button" href="?downloadAiRun=' . (int)($row['uid'] ?? 0) . '">Download suggestions</a></td>'
             . '</tr>';
     }
 
@@ -472,14 +887,25 @@ final class SeoAssistantModuleController
         ) {
             $applyCapability = 'content_draft';
         }
+        if (
+            ($applyCapability === '' || $applyCapability === 'manual')
+            && (string)($row['action_type'] ?? '') === 'image_alt_suggestion'
+            && ($payload['image_alt_suggestions'] ?? []) !== []
+        ) {
+            $applyCapability = 'image_alt';
+        }
         if ($applyCapability === 'safe_metadata' || $legacySafeMetadata) {
             $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
             $secondCommand = (string)($row['status'] ?? '') === 'applied'
                 ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
                 : 'Apply first';
-        } elseif ($applyCapability === 'content_draft') {
+        } elseif ($applyCapability === 'content_draft' || $applyCapability === 'image_alt') {
             $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
-            $secondCommand = 'Publish directly: vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes --publish-content';
+            $secondCommand = $applyCapability === 'content_draft'
+                ? 'Publish directly: vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes --publish-content'
+                : ((string)($row['status'] ?? '') === 'applied'
+                    ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
+                    : 'Apply first');
         } else {
             $applyCommand = 'Manual content/template change';
             $secondCommand = (string)($row['status'] ?? '') === 'applied'
@@ -532,6 +958,13 @@ final class SeoAssistantModuleController
             )
         ) {
             $capability = 'content_draft';
+        }
+        if (
+            ($capability === '' || $capability === 'manual')
+            && $actionType === 'image_alt_suggestion'
+            && ($payload['image_alt_suggestions'] ?? []) !== []
+        ) {
+            $capability = 'image_alt';
         }
 
         $details = '';

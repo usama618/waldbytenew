@@ -33,18 +33,27 @@ AI is optional. If `SEO_ASSISTANT_OPENAI_API_KEY` and `SEO_ASSISTANT_OPENAI_MODE
 
 AI runs keep compact memory in the database. The extension stores the latest 10 AI generation runs and sends those summaries into the next AI run as context.
 
+Each AI run can also be exported from `Web > SEO Assistant` with the `Download suggestions`
+button. The downloaded Markdown document contains the run summary, analyzed pages, matching
+recommendations, metadata apply commands, content drafts, and manual template/schema/link/image
+tasks. Use this document in the local TYPO3/DDEV installation to test code and content changes
+before deploying them through the CI/CD pipeline.
+
 Recommendations now include typed action metadata:
 
 - `metadata_update`: safe apply candidate for `pages.seo_title` and/or `pages.description`
 - `content_gap_brief`: applyable content draft for missing/weak page content
 - `internal_link_suggestion`: manual internal-link direction
-- `image_alt_suggestion`: manual image alt review
+- `image_alt_suggestion`: applyable image alt text when TYPO3 file references can be matched safely
 - `structured_data_suggestion`: schema idea for implementation through the site package renderer
 - `technical_indexing_issue`: routing, robots, canonical or HTTP issue requiring manual review
 
 `metadata_update` rows with `apply_capability=safe_metadata` can be applied automatically.
 `content_gap_brief` rows with `apply_capability=content_draft` can create a TYPO3 content element
 automatically, using the site package `seo_text` CType by default.
+`image_alt_suggestion` rows with `apply_capability=image_alt` can update matched
+`sys_file_reference.alternative` values automatically. If the rendered image URL cannot be matched
+to exactly one TYPO3 file reference, that image is skipped instead of guessed.
 
 ## First run
 
@@ -133,8 +142,8 @@ vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh
 vendor/bin/typo3 seo:recommendations:verify --all --refresh
 ```
 
-The `--refresh` option re-runs a rendered snapshot for the affected URL before comparing the applied
-metadata with the current HTML title and meta description.
+The `--refresh` option re-runs a rendered snapshot for the affected URL before comparing applied
+metadata or image alt text with the current frontend HTML.
 
 ## Suggested cron
 

@@ -46,11 +46,16 @@ final class RecommendationVerificationService
             ];
         }
 
+        $actionType = $this->extractActionType($recommendation);
+        if ($actionType === 'image_alt_suggestion') {
+            return $this->verifyImageAltRecommendation($recommendationUid, $recommendation, $pageUrl);
+        }
+
         $metadataAction = $this->extractMetadataAction($recommendation);
-        if ($metadataAction['actionType'] !== 'metadata_update') {
+        if ($actionType !== 'metadata_update' && $metadataAction['actionType'] !== 'metadata_update') {
             $result = [
                 'status' => 'manual_review',
-                'message' => 'Only metadata_update actions can be verified automatically.',
+                'message' => 'Only metadata_update and image_alt_suggestion actions can be verified automatically.',
                 'checks' => [],
             ];
             $this->storeVerification($recommendationUid, $result);
@@ -103,6 +108,71 @@ final class RecommendationVerificationService
         $message = $status === 'verified'
             ? 'Applied metadata is visible in the latest rendered snapshot.'
             : 'Applied metadata does not fully match the latest rendered snapshot.';
+
+        $result = [
+            'status' => $status,
+            'message' => $message,
+            'rendered_snapshot_uid' => (int)($renderedSnapshot['uid'] ?? 0),
+            'rendered_snapshot_time' => (int)($renderedSnapshot['tstamp'] ?? 0),
+            'checks' => $checks,
+        ];
+        $this->storeVerification($recommendationUid, $result);
+
+        return [
+            'uid' => $recommendationUid,
+            'pageUrl' => $pageUrl,
+            'status' => $status,
+            'checkedFields' => array_keys($checks),
+            'message' => $message,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @return array{uid:int,pageUrl:string,status:string,checkedFields:list<string>,message:string}
+     */
+    private function verifyImageAltRecommendation(int $recommendationUid, array $recommendation, string $pageUrl): array
+    {
+        $renderedSnapshot = $this->fetchRenderedSnapshot($pageUrl);
+        if ($renderedSnapshot === null) {
+            $result = [
+                'status' => 'needs_snapshot',
+                'message' => 'No rendered snapshot exists for this URL. Run seo:rendered:snapshot for the page, then verify again.',
+                'checks' => [],
+            ];
+            $this->storeVerification($recommendationUid, $result);
+
+            return [
+                'uid' => $recommendationUid,
+                'pageUrl' => $pageUrl,
+                'status' => $result['status'],
+                'checkedFields' => [],
+                'message' => $result['message'],
+            ];
+        }
+
+        $appliedChanges = $this->decodeJson((string)($recommendation['applied_changes_json'] ?? '{}'));
+        $updatedReferences = array_values(array_filter((array)($appliedChanges['updated_references'] ?? []), 'is_array'));
+        $renderedImages = $this->decodeJson((string)($renderedSnapshot['images_json'] ?? '[]'));
+
+        $checks = [];
+        foreach ($updatedReferences as $reference) {
+            $expectedAlt = (string)($reference['after'] ?? '');
+            $renderedImage = $this->matchRenderedImage((string)($reference['src'] ?? ''), (string)($reference['filename'] ?? ''), $renderedImages);
+            $renderedAlt = is_array($renderedImage) ? (string)($renderedImage['alt'] ?? '') : '';
+            $checks['sys_file_reference_' . (int)($reference['reference_uid'] ?? 0)] = [
+                'expected' => $expectedAlt,
+                'rendered' => $renderedAlt,
+                'src' => (string)($reference['src'] ?? ''),
+                'matched' => $this->metadataMatches($expectedAlt, $renderedAlt),
+            ];
+        }
+
+        $failed = array_filter($checks, static fn(array $check): bool => !$check['matched']);
+        $status = $checks !== [] && $failed === [] ? 'verified' : 'needs_review';
+        $message = $status === 'verified'
+            ? 'Applied image alt text is visible in the latest rendered snapshot.'
+            : 'Applied image alt text does not fully match the latest rendered snapshot.';
 
         $result = [
             'status' => $status,
@@ -192,14 +262,28 @@ final class RecommendationVerificationService
 
     /**
      * @param array<string,mixed> $recommendation
+     */
+    private function extractActionType(array $recommendation): string
+    {
+        $payload = $this->decodeJson((string)($recommendation['action_payload_json'] ?? '{}'));
+        $actionType = trim((string)($recommendation['action_type'] ?? ''));
+        if ($actionType === '' && ((string)($payload['seo_title'] ?? $recommendation['proposed_seo_title'] ?? '') !== '' || (string)($payload['description'] ?? $recommendation['proposed_description'] ?? '') !== '')) {
+            return 'metadata_update';
+        }
+        if ($actionType === '' && ($payload['image_alt_suggestions'] ?? []) !== []) {
+            return 'image_alt_suggestion';
+        }
+
+        return $actionType !== '' ? $actionType : 'manual_review';
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
      * @return array{actionType:string,seoTitle:string,description:string}
      */
     private function extractMetadataAction(array $recommendation): array
     {
-        $payload = json_decode((string)($recommendation['action_payload_json'] ?? '{}'), true);
-        if (!is_array($payload)) {
-            $payload = [];
-        }
+        $payload = $this->decodeJson((string)($recommendation['action_payload_json'] ?? '{}'));
 
         $seoTitle = trim((string)($payload['seo_title'] ?? $recommendation['proposed_seo_title'] ?? ''));
         $description = trim((string)($payload['description'] ?? $recommendation['proposed_description'] ?? ''));
@@ -213,6 +297,51 @@ final class RecommendationVerificationService
             'seoTitle' => mb_substr($seoTitle, 0, 60),
             'description' => mb_substr($description, 0, 155),
         ];
+    }
+
+    /**
+     * @param mixed $images
+     * @return array<string,mixed>|null
+     */
+    private function matchRenderedImage(string $originalSrc, string $filename, $images): ?array
+    {
+        if (!is_array($images)) {
+            return null;
+        }
+
+        $originalPath = mb_strtolower(rawurldecode((string)(parse_url($originalSrc, PHP_URL_PATH) ?: $originalSrc)));
+        $originalBasename = mb_strtolower((string)basename($originalPath));
+        $filename = mb_strtolower($filename);
+        $filenameStem = mb_strtolower((string)pathinfo($filename, PATHINFO_FILENAME));
+
+        foreach ($images as $image) {
+            if (!is_array($image)) {
+                continue;
+            }
+            $srcPath = mb_strtolower(rawurldecode((string)(parse_url((string)($image['src'] ?? ''), PHP_URL_PATH) ?: ($image['src'] ?? ''))));
+            $srcBasename = mb_strtolower((string)basename($srcPath));
+            if ($originalPath !== '' && $srcPath === $originalPath) {
+                return $image;
+            }
+            if ($originalBasename !== '' && $srcBasename === $originalBasename) {
+                return $image;
+            }
+            if ($filenameStem !== '' && str_contains(preg_replace('/^csm_/', '', $srcBasename) ?? $srcBasename, $filenameStem)) {
+                return $image;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decodeJson(string $json): array
+    {
+        $data = json_decode($json, true);
+
+        return is_array($data) ? $data : [];
     }
 
     private function metadataMatches(string $expected, string $rendered): bool
