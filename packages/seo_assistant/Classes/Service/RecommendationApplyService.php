@@ -21,6 +21,7 @@ final class RecommendationApplyService
     public function __construct(
         private readonly ConnectionPool $connectionPool,
         private readonly UrlNormalizer $urlNormalizer,
+        private readonly RecommendationRollbackService $rollbackService,
     ) {}
 
     /**
@@ -672,6 +673,27 @@ final class RecommendationApplyService
                 $pageData['description'] = $description;
             }
 
+            $this->rollbackService->record(
+                $recommendationUid,
+                $actionType,
+                'pages',
+                $pageUid,
+                [
+                    'page_uid' => $pageUid,
+                    'fields' => [
+                        'seo_title' => [
+                            'before' => (string)($currentMetadata['seo_title'] ?? ''),
+                            'after' => $seoTitle,
+                        ],
+                        'description' => [
+                            'before' => (string)($currentMetadata['description'] ?? ''),
+                            'after' => $description,
+                        ],
+                    ],
+                ],
+                'Restore previous page metadata.'
+            );
+
             $this->connectionPool->getConnectionForTable('pages')
                 ->update('pages', $pageData, ['uid' => $pageUid], $types);
 
@@ -759,6 +781,9 @@ final class RecommendationApplyService
         if ($publishContent && !$contentDraft['hasReadyBody'] && !$force) {
             throw new RuntimeException('Publishing content requires an AI content_body_html payload. Run AI generation again, or use --force to publish the fallback draft.', 1760000049);
         }
+        if ($publishContent && !$force && !in_array((string)($recommendation['quality_status'] ?? ''), ['passed', 'warning'], true)) {
+            throw new RuntimeException('Publishing visible content requires a passed recommendation quality check. Apply as a hidden draft or use --force intentionally.', 1760000070);
+        }
 
         $contentCType = $this->normalizeCType($contentCType);
         $contentHidden = !$publishContent;
@@ -805,6 +830,21 @@ final class RecommendationApplyService
 
             $connection->insert(self::CONTENT_TABLE, $contentData, $types);
             $contentUid = (int)$connection->lastInsertId();
+
+            $this->rollbackService->record(
+                $recommendationUid,
+                $action['actionType'],
+                self::CONTENT_TABLE,
+                $contentUid,
+                [
+                    'page_uid' => $pageUid,
+                    'content_uid' => $contentUid,
+                    'content_hidden' => $contentHidden,
+                    'content_ctype' => $contentCType,
+                    'content_header' => $contentDraft['header'],
+                ],
+                'Remove the created content draft.'
+            );
 
             $appliedChanges = [
                 'action_type' => $action['actionType'],
@@ -917,6 +957,19 @@ final class RecommendationApplyService
         }
 
         if (!$dryRun) {
+            $this->rollbackService->record(
+                $recommendationUid,
+                $action['actionType'],
+                'sys_file_reference',
+                (int)($matches[0]['reference_uid'] ?? 0),
+                [
+                    'page_uid' => $pageUid,
+                    'updated_references' => $matches,
+                    'skipped_suggestions' => $skipped,
+                ],
+                'Restore previous image alt text.'
+            );
+
             $connection = $this->connectionPool->getConnectionForTable('sys_file_reference');
             $columns = $connection->getSchemaInformation()->listTableColumnNames('sys_file_reference');
             if (!in_array('alternative', $columns, true)) {
@@ -1031,6 +1084,19 @@ final class RecommendationApplyService
         }
 
         if (!$dryRun) {
+            $this->rollbackService->record(
+                $recommendationUid,
+                $action['actionType'],
+                'pages',
+                $pageUid,
+                [
+                    'page_uid' => $pageUid,
+                    'before' => $pageBefore,
+                    'after' => array_intersect_key($data, array_flip(['no_index', 'no_follow', 'canonical_link'])),
+                ],
+                'Restore previous indexing fields.'
+            );
+
             $connection->update('pages', $data, ['uid' => $pageUid], $types);
             $appliedChanges = [
                 'action_type' => $action['actionType'],
@@ -1105,14 +1171,16 @@ final class RecommendationApplyService
                 'enabled' => Connection::PARAM_INT,
             ];
 
-            $existingUid = (int)$connection->createQueryBuilder()
-                ->select('uid')
+            $existingRow = $connection->createQueryBuilder()
+                ->select('*')
                 ->from(self::STRUCTURED_DATA_TABLE)
                 ->where('schema_hash = :schemaHash')
                 ->setParameter('schemaHash', $schemaHash)
                 ->setMaxResults(1)
                 ->executeQuery()
-                ->fetchOne();
+                ->fetchAssociative();
+            $previousRow = is_array($existingRow) ? $existingRow : [];
+            $existingUid = (int)($previousRow['uid'] ?? 0);
 
             if ($existingUid > 0) {
                 unset($data['crdate'], $types['crdate']);
@@ -1121,6 +1189,21 @@ final class RecommendationApplyService
                 $connection->insert(self::STRUCTURED_DATA_TABLE, $data, $types);
                 $existingUid = (int)$connection->lastInsertId();
             }
+
+            $this->rollbackService->record(
+                $recommendationUid,
+                $action['actionType'],
+                self::STRUCTURED_DATA_TABLE,
+                $existingUid,
+                [
+                    'page_uid' => $pageUid,
+                    'structured_data_uid' => $existingUid,
+                    'previous_row' => $previousRow,
+                    'schema_type' => (string)$schema['schema_type'],
+                    'json_ld' => $schema['json_ld'],
+                ],
+                'Restore or disable dynamic structured data.'
+            );
 
             $appliedChanges = [
                 'action_type' => $action['actionType'],

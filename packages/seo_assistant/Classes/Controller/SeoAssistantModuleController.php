@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\SeoAssistant\Controller;
 
 use App\SeoAssistant\Service\RecommendationApplyService;
-use App\SeoAssistant\Service\RecommendationService;
+use App\SeoAssistant\Service\RecommendationRollbackService;
 use App\SeoAssistant\Service\AiUsageLogService;
 use App\SeoAssistant\Service\ApplyHistoryService;
 use App\SeoAssistant\Service\ConfigurationService;
-use App\SeoAssistant\Service\PageSnapshotService;
 use App\SeoAssistant\Service\RecommendationImpactEvaluationService;
-use App\SeoAssistant\Service\RenderedSnapshotService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
+use App\SeoAssistant\Service\SeoAssistantJobService;
 use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -28,8 +28,11 @@ final class SeoAssistantModuleController
     private const PAGE_SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
     private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
+    private const ROLLBACK_TABLE = 'tx_seoassistant_recommendation_rollback';
     private const AI_RUN_TABLE = 'tx_seoassistant_ai_run';
     private const AI_CALL_TABLE = 'tx_seoassistant_ai_call';
+    private const ALERT_TABLE = 'tx_seoassistant_alert';
+    private const JOB_TABLE = 'tx_seoassistant_job';
     private const APPLY_HISTORY_TABLE = 'tx_seoassistant_apply_history';
     private const IMPACT_EVALUATION_TABLE = 'tx_seoassistant_impact_evaluation';
 
@@ -37,10 +40,10 @@ final class SeoAssistantModuleController
         private readonly ConnectionPool $connectionPool,
         private readonly UrlNormalizer $urlNormalizer,
         private readonly RecommendationApplyService $recommendationApplyService,
-        private readonly PageSnapshotService $pageSnapshotService,
-        private readonly RenderedSnapshotService $renderedSnapshotService,
-        private readonly RecommendationService $recommendationService,
+        private readonly RecommendationRollbackService $rollbackService,
         private readonly AiUsageLogService $aiUsageLogService,
+        private readonly SeoAssistantAlertService $alertService,
+        private readonly SeoAssistantJobService $jobService,
         private readonly ApplyHistoryService $applyHistoryService,
         private readonly RecommendationImpactEvaluationService $impactEvaluationService,
         private readonly ConfigurationService $configuration,
@@ -93,7 +96,7 @@ final class SeoAssistantModuleController
                     return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
                 }
 
-                $result = $this->recommendationApplyService->apply($uid, false, true, true, 'seo_text');
+                $result = $this->recommendationApplyService->apply($uid, false, false, false, 'seo_text');
                 $alreadyImplemented = ($result['alreadyImplemented'] ?? false) === true;
                 $historyUid = $this->applyHistoryService->record(
                     'applyRecommendation',
@@ -163,34 +166,89 @@ final class SeoAssistantModuleController
 
             if ($action === 'applyAllRecommendations') {
                 $limit = max(1, min(500, (int)($parsedBody['limit'] ?? 100)));
-                $result = $this->recommendationApplyService->applyAll(false, true, true, 'seo_text', $limit);
+                $jobUid = $this->jobService->enqueue('apply_all_recommendations', [
+                    'limit' => $limit,
+                    'contentCType' => 'seo_text',
+                ]);
+
+                return [
+                    'type' => 'success',
+                    'message' => 'Bulk apply queued as job #' . $jobUid . '. Run vendor/bin/typo3 seo:jobs:run to process queued jobs.',
+                ];
+            }
+
+            if ($action === 'rollbackRecommendation') {
+                $uid = (int)($parsedBody['uid'] ?? 0);
+                if ($uid <= 0) {
+                    return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
+                }
+
+                $result = $this->rollbackService->rollbackRecommendation($uid, 'backend');
                 $historyUid = $this->applyHistoryService->record(
-                    'applyAllRecommendations',
-                    'Apply all automatic recommendations',
+                    'rollbackRecommendation',
+                    'Roll back recommendation #' . $uid,
                     'backend',
                     $result['failed'] > 0 ? 'partial' : 'success',
                     [
-                        'total' => $result['total'],
-                        'applied' => $result['applied'],
-                        'alreadyImplemented' => $result['alreadyImplemented'],
+                        'total' => count($result['rows']),
+                        'applied' => $result['rolledBack'],
+                        'alreadyImplemented' => 0,
                         'skipped' => $result['skipped'],
                         'failed' => $result['failed'],
-                        'limit' => $limit,
-                        'message' => 'Bulk apply complete: applied ' . $result['applied']
-                            . ', already implemented ' . $result['alreadyImplemented']
-                            . ', skipped manual ' . $result['skipped']
-                            . ', failed ' . $result['failed'] . '.',
+                        'message' => 'Rollback complete: rolled back ' . $result['rolledBack'] . ', failed ' . $result['failed'] . '.',
                     ],
                     $result['rows']
                 );
 
                 return [
                     'type' => $result['failed'] > 0 ? 'error' : 'success',
-                    'message' => 'Bulk apply complete: applied ' . $result['applied']
-                        . ', already implemented ' . $result['alreadyImplemented']
-                        . ', skipped manual ' . $result['skipped']
-                        . ', failed ' . $result['failed'] . '. History #' . $historyUid . '.',
+                    'message' => 'Rollback complete for recommendation #' . $uid . ': rolled back '
+                        . $result['rolledBack'] . ', failed ' . $result['failed'] . '. History #' . $historyUid . '.',
                 ];
+            }
+
+            if ($action === 'rollbackApplyHistory') {
+                $historyUid = (int)($parsedBody['historyUid'] ?? 0);
+                if ($historyUid <= 0) {
+                    return ['type' => 'error', 'message' => 'No apply history uid was provided.'];
+                }
+                $history = $this->applyHistoryService->fetchByUid($historyUid);
+                if ($history === null) {
+                    return ['type' => 'error', 'message' => 'Apply history #' . $historyUid . ' was not found.'];
+                }
+
+                $result = $this->rollbackService->rollbackRecommendations($this->recommendationUidsFromApplyHistory($history), 'backend');
+                $rollbackHistoryUid = $this->applyHistoryService->record(
+                    'rollbackApplyHistory',
+                    'Roll back apply history #' . $historyUid,
+                    'backend',
+                    $result['failed'] > 0 ? 'partial' : 'success',
+                    [
+                        'total' => count($result['rows']),
+                        'applied' => $result['rolledBack'],
+                        'alreadyImplemented' => 0,
+                        'skipped' => $result['skipped'],
+                        'failed' => $result['failed'],
+                        'message' => 'Bulk rollback complete: rolled back ' . $result['rolledBack'] . ', failed ' . $result['failed'] . '.',
+                    ],
+                    $result['rows']
+                );
+
+                return [
+                    'type' => $result['failed'] > 0 ? 'error' : 'success',
+                    'message' => 'Bulk rollback complete for history #' . $historyUid . ': rolled back '
+                        . $result['rolledBack'] . ', failed ' . $result['failed'] . '. History #' . $rollbackHistoryUid . '.',
+                ];
+            }
+
+            if ($action === 'resolveAlert') {
+                $uid = (int)($parsedBody['uid'] ?? 0);
+                if ($uid <= 0) {
+                    return ['type' => 'error', 'message' => 'No alert uid was provided.'];
+                }
+                $this->alertService->resolve($uid);
+
+                return ['type' => 'success', 'message' => 'Alert #' . $uid . ' resolved.'];
             }
 
             if ($action === 'generateRecommendations') {
@@ -198,23 +256,16 @@ final class SeoAssistantModuleController
                 $recommendationLimit = max(1, min(500, (int)($parsedBody['recommendationLimit'] ?? $this->configuration->getRecommendationLimit())));
                 $aiLimit = max(1, min(100, (int)($parsedBody['aiLimit'] ?? $this->configuration->getAiLimit())));
 
-                $pageResult = $this->pageSnapshotService->snapshot(null, false);
-                $renderedResult = $this->renderedSnapshotService->snapshot(null, [], $renderedLimit, false);
-                $recommendationResult = $this->recommendationService->generate(
-                    $this->configuration->getMinImpressions(),
-                    $recommendationLimit,
-                    true,
-                    $aiLimit
-                );
+                $jobUid = $this->jobService->enqueue('generate_recommendations', [
+                    'renderedLimit' => $renderedLimit,
+                    'recommendationLimit' => $recommendationLimit,
+                    'aiLimit' => $aiLimit,
+                    'minImpressions' => $this->configuration->getMinImpressions(),
+                ]);
 
                 return [
                     'type' => 'success',
-                    'message' => 'Fresh recommendations generated: page snapshots '
-                        . $pageResult['stored'] . '/' . $pageResult['processed']
-                        . ', rendered snapshots ' . $renderedResult['stored'] . '/' . $renderedResult['processed']
-                        . ', failed renders ' . $renderedResult['failed']
-                        . ', stored recommendations ' . $recommendationResult['stored']
-                        . ', mode ' . $recommendationResult['generationMode'] . '.',
+                    'message' => 'Fresh recommendation generation queued as job #' . $jobUid . '. Run vendor/bin/typo3 seo:jobs:run to process queued jobs.',
                 ];
             }
 
@@ -250,6 +301,23 @@ final class SeoAssistantModuleController
     }
 
     /**
+     * @param array<string,mixed> $history
+     * @return list<int>
+     */
+    private function recommendationUidsFromApplyHistory(array $history): array
+    {
+        $result = $this->decodeJson((string)($history['result_json'] ?? '{}'));
+        $uids = [];
+        foreach ((array)($result['rows'] ?? []) as $row) {
+            if (is_array($row) && (int)($row['uid'] ?? 0) > 0) {
+                $uids[] = (int)$row['uid'];
+            }
+        }
+
+        return array_values(array_unique($uids));
+    }
+
+    /**
      * @param array{type:string,message:string}|null $notice
      */
     private function render(ServerRequestInterface $request, ?array $notice = null): string
@@ -264,7 +332,10 @@ final class SeoAssistantModuleController
         $aiRuns = $this->fetchAiRuns();
         $aiUsageSummary = $this->aiUsageLogService->fetchCurrentMonthSummary();
         $aiCalls = $this->aiUsageLogService->fetchRecentCalls(20);
+        $alerts = $this->alertService->fetchOpen(20);
+        $jobs = $this->jobService->fetchRecent(20);
         $applyHistory = $this->applyHistoryService->fetchRecent(20);
+        $rollbacks = $this->rollbackService->fetchRecent(20);
         $impactEvaluations = $this->impactEvaluationService->fetchRecentEvaluations(20);
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
@@ -323,6 +394,10 @@ final class SeoAssistantModuleController
             . '<p class="muted">Central overview for Search Console, rendered frontend audits, CMS content snapshots and reviewable recommendations.</p>'
             . $this->renderNotice($notice)
             . $this->renderStats($stats)
+            . '<h2>Open Alerts</h2>'
+            . '<div class="panel">' . $this->renderAlertsTable($alerts, $formToken) . '</div>'
+            . '<h2>Queued Jobs</h2>'
+            . '<div class="panel">' . $this->renderJobsTable($jobs) . '</div>'
             . '<h2>GSC Trend Insights</h2>'
             . '<div class="panel">' . $this->renderGscInsightsTable($gscInsights) . '</div>'
             . '<h2>AI Run Memory</h2>'
@@ -330,7 +405,9 @@ final class SeoAssistantModuleController
             . '<h2>AI Usage</h2>'
             . '<div class="panel">' . $this->renderAiUsagePanel($aiUsageSummary, $aiCalls) . '</div>'
             . '<h2>Apply History</h2>'
-            . '<div class="panel">' . $this->renderApplyHistoryTable($applyHistory) . '</div>'
+            . '<div class="panel">' . $this->renderApplyHistoryTable($applyHistory, $formToken) . '</div>'
+            . '<h2>Rollback Snapshots</h2>'
+            . '<div class="panel">' . $this->renderRollbackTable($rollbacks, $formToken) . '</div>'
             . '<h2>Impact Evaluations</h2>'
             . '<div class="panel">' . $this->renderImpactEvaluationsTable($impactEvaluations) . '</div>'
             . '<h2>Recommendations</h2>'
@@ -360,8 +437,11 @@ final class SeoAssistantModuleController
             self::PAGE_SNAPSHOT_TABLE,
             self::RENDERED_SNAPSHOT_TABLE,
             self::RECOMMENDATION_TABLE,
+            self::ROLLBACK_TABLE,
             self::AI_RUN_TABLE,
             self::AI_CALL_TABLE,
+            self::ALERT_TABLE,
+            self::JOB_TABLE,
             'tx_seoassistant_structured_data',
             self::APPLY_HISTORY_TABLE,
             self::IMPACT_EVALUATION_TABLE,
@@ -921,7 +1001,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,aiCalls:int,applyHistory:int,impactEvaluations:int}
+     * @return array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,aiCalls:int,alerts:int,jobs:int,applyHistory:int,rollbacks:int,impactEvaluations:int}
      */
     private function fetchStats(): array
     {
@@ -933,7 +1013,10 @@ final class SeoAssistantModuleController
             'recommendations' => $this->countRows(self::RECOMMENDATION_TABLE),
             'aiRuns' => $this->countRows(self::AI_RUN_TABLE),
             'aiCalls' => $this->countRows(self::AI_CALL_TABLE),
+            'alerts' => $this->countRows(self::ALERT_TABLE),
+            'jobs' => $this->countRows(self::JOB_TABLE),
             'applyHistory' => $this->countRows(self::APPLY_HISTORY_TABLE),
+            'rollbacks' => $this->countRows(self::ROLLBACK_TABLE),
             'impactEvaluations' => $this->countRows(self::IMPACT_EVALUATION_TABLE),
         ];
     }
@@ -996,7 +1079,7 @@ final class SeoAssistantModuleController
     }
 
     /**
-     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,aiCalls:int,applyHistory:int,impactEvaluations:int} $stats
+     * @param array{gsc:int,gscInsights:int,pages:int,rendered:int,recommendations:int,aiRuns:int,aiCalls:int,alerts:int,jobs:int,applyHistory:int,rollbacks:int,impactEvaluations:int} $stats
      */
     private function renderStats(array $stats): string
     {
@@ -1008,7 +1091,10 @@ final class SeoAssistantModuleController
             . '<div class="stat"><span class="muted">Recommendations</span><strong>' . $stats['recommendations'] . '</strong></div>'
             . '<div class="stat"><span class="muted">AI memory runs</span><strong>' . $stats['aiRuns'] . '</strong></div>'
             . '<div class="stat"><span class="muted">AI calls logged</span><strong>' . $stats['aiCalls'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Open/job alerts</span><strong>' . $stats['alerts'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Queued jobs</span><strong>' . $stats['jobs'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Apply history</span><strong>' . $stats['applyHistory'] . '</strong></div>'
+            . '<div class="stat"><span class="muted">Rollback snapshots</span><strong>' . $stats['rollbacks'] . '</strong></div>'
             . '<div class="stat"><span class="muted">Impact evaluations</span><strong>' . $stats['impactEvaluations'] . '</strong></div>'
             . '</div>';
     }
@@ -1042,8 +1128,8 @@ final class SeoAssistantModuleController
             . 'var text=document.getElementById("seoBusyText");'
             . 'if(!overlay||!title||!text){return;}'
             . 'var labels={'
-            . 'generateRecommendations:["Generating fresh recommendations","Running page snapshots, rendered frontend snapshots and AI recommendation generation. This can take a while."],'
-            . 'applyAllRecommendations:["Applying automatic recommendations","Writing safe TYPO3 database changes. This can take a moment."],'
+            . 'generateRecommendations:["Queueing recommendation job","Creating a backend job. The queued worker will process snapshots and AI generation outside this web request."],'
+            . 'applyAllRecommendations:["Queueing bulk apply job","Creating a backend job. The queued worker will apply safe TYPO3 database changes outside this web request."],'
             . 'applyRecommendation:["Applying recommendation","Writing this recommendation and refreshing the module."],'
             . 'rejectRecommendation:["Rejecting recommendation","Marking this suggestion as rejected."]'
             . '};'
@@ -1108,6 +1194,87 @@ final class SeoAssistantModuleController
     }
 
     /**
+     * @param list<array<string,mixed>> $alerts
+     */
+    private function renderAlertsTable(array $alerts, string $formToken): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Severity</th><th>Source</th><th>Title</th><th>Message</th><th>Actions</th>'
+            . '</tr></thead><tbody>'
+            . ($alerts === [] ? '<tr><td colspan="6" class="muted">No open SEO Assistant alerts.</td></tr>' : '')
+            . implode('', array_map(fn(array $row): string => $this->renderAlertRow($row, $formToken), $alerts))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderAlertRow(array $row, string $formToken): string
+    {
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['severity'] ?? '')) . '</span></td>'
+            . '<td>' . $this->escape((string)($row['source'] ?? '')) . '</td>'
+            . '<td>' . $this->escape((string)($row['title'] ?? '')) . '</td>'
+            . '<td>' . nl2br($this->escape($this->shorten((string)($row['message'] ?? ''), 240))) . '</td>'
+            . '<td><form method="post" class="inline-form">'
+            . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+            . '<input type="hidden" name="action" value="resolveAlert">'
+            . '<input type="hidden" name="uid" value="' . (int)$row['uid'] . '">'
+            . '<button class="button" type="submit">Resolve</button>'
+            . '</form></td>'
+            . '</tr>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $jobs
+     */
+    private function renderJobsTable(array $jobs): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Type</th><th>Status</th><th>Attempts</th><th>Started</th><th>Finished</th><th>Result/Error</th>'
+            . '</tr></thead><tbody>'
+            . ($jobs === [] ? '<tr><td colspan="7" class="muted">No queued SEO Assistant jobs yet.</td></tr>' : '')
+            . implode('', array_map($this->renderJobRow(...), $jobs))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderJobRow(array $row): string
+    {
+        $result = (string)($row['error_message'] ?? '');
+        if ($result === '') {
+            $resultData = $this->decodeJson((string)($row['result_json'] ?? '{}'));
+            if ($resultData !== []) {
+                $recommendations = is_array($resultData['recommendations'] ?? null) ? $resultData['recommendations'] : [];
+                if ($recommendations !== []) {
+                    $result = 'Stored recommendations: ' . (int)($recommendations['stored'] ?? 0);
+                }
+                $applyAll = is_array($resultData['applyAll'] ?? null) ? $resultData['applyAll'] : [];
+                if ($applyAll !== []) {
+                    $result = 'Applied ' . (int)($applyAll['applied'] ?? 0)
+                        . ', already implemented ' . (int)($applyAll['alreadyImplemented'] ?? 0)
+                        . ', skipped ' . (int)($applyAll['skipped'] ?? 0)
+                        . ', failed ' . (int)($applyAll['failed'] ?? 0)
+                        . '. History #' . (int)($resultData['historyUid'] ?? 0);
+                }
+            }
+        }
+
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td>' . $this->escape((string)($row['job_type'] ?? '')) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
+            . '<td>' . (int)($row['attempts'] ?? 0) . '</td>'
+            . '<td>' . $this->escape($this->formatDateTime((int)($row['started_at'] ?? 0))) . '</td>'
+            . '<td>' . $this->escape($this->formatDateTime((int)($row['finished_at'] ?? 0))) . '</td>'
+            . '<td>' . nl2br($this->escape($this->shorten($result, 240))) . '</td>'
+            . '</tr>';
+    }
+
+    /**
      * @param array{month:string,calls:int,successful:int,failed:int,inputTokens:int,outputTokens:int,totalTokens:int,estimatedCostUsd:float} $summary
      * @param list<array<string,mixed>> $calls
      */
@@ -1166,26 +1333,36 @@ final class SeoAssistantModuleController
     /**
      * @param list<array<string,mixed>> $historyRows
      */
-    private function renderApplyHistoryTable(array $historyRows): string
+    private function renderApplyHistoryTable(array $historyRows, string $formToken): string
     {
         return '<table><thead><tr>'
-            . '<th>Date</th><th>Action</th><th>Source</th><th>Status</th><th>Result</th><th>Summary</th><th>Document</th>'
+            . '<th>Date</th><th>Action</th><th>Source</th><th>Status</th><th>Result</th><th>Summary</th><th>Actions</th>'
             . '</tr></thead><tbody>'
             . ($historyRows === [] ? '<tr><td colspan="7" class="muted">No applied recommendation history yet.</td></tr>' : '')
-            . implode('', array_map($this->renderApplyHistoryRow(...), $historyRows))
+            . implode('', array_map(fn(array $row): string => $this->renderApplyHistoryRow($row, $formToken), $historyRows))
             . '</tbody></table>';
     }
 
     /**
      * @param array<string,mixed> $row
      */
-    private function renderApplyHistoryRow(array $row): string
+    private function renderApplyHistoryRow(array $row, string $formToken): string
     {
         $result = 'Total ' . (int)($row['total'] ?? 0)
             . '<br>Applied ' . (int)($row['applied'] ?? 0)
             . '<br>Already implemented ' . (int)($row['already_implemented'] ?? 0)
             . '<br>Skipped ' . (int)($row['skipped'] ?? 0)
             . '<br>Failed ' . (int)($row['failed'] ?? 0);
+
+        $actions = '<a class="button" href="?downloadApplyHistory=' . (int)($row['uid'] ?? 0) . '">View changes</a>';
+        if ((int)($row['applied'] ?? 0) > 0 && !str_starts_with((string)($row['action_type'] ?? ''), 'rollback')) {
+            $actions .= ' <form method="post" class="inline-form">'
+                . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+                . '<input type="hidden" name="action" value="rollbackApplyHistory">'
+                . '<input type="hidden" name="historyUid" value="' . (int)$row['uid'] . '">'
+                . '<button class="button button-reject" type="submit">Roll back run</button>'
+                . '</form>';
+        }
 
         return '<tr>'
             . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
@@ -1194,7 +1371,46 @@ final class SeoAssistantModuleController
             . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
             . '<td>' . $result . '</td>'
             . '<td>' . nl2br($this->escape($this->shorten((string)($row['summary'] ?? ''), 180))) . '</td>'
-            . '<td><a class="button" href="?downloadApplyHistory=' . (int)($row['uid'] ?? 0) . '">Download history</a></td>'
+            . '<td>' . $actions . '</td>'
+            . '</tr>';
+    }
+
+    /**
+     * @param list<array<string,mixed>> $rollbacks
+     */
+    private function renderRollbackTable(array $rollbacks, string $formToken): string
+    {
+        return '<table><thead><tr>'
+            . '<th>Date</th><th>Status</th><th>Recommendation</th><th>Action</th><th>Target</th><th>Message</th><th>Actions</th>'
+            . '</tr></thead><tbody>'
+            . ($rollbacks === [] ? '<tr><td colspan="7" class="muted">No rollback snapshots yet.</td></tr>' : '')
+            . implode('', array_map(fn(array $row): string => $this->renderRollbackRow($row, $formToken), $rollbacks))
+            . '</tbody></table>';
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function renderRollbackRow(array $row, string $formToken): string
+    {
+        $actions = '<span class="muted">-</span>';
+        if ((string)($row['status'] ?? '') === 'available') {
+            $actions = '<form method="post" class="inline-form">'
+                . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+                . '<input type="hidden" name="action" value="rollbackRecommendation">'
+                . '<input type="hidden" name="uid" value="' . (int)$row['recommendation_uid'] . '">'
+                . '<button class="button button-reject" type="submit">Roll back recommendation</button>'
+                . '</form>';
+        }
+
+        return '<tr>'
+            . '<td>' . $this->escape(date('Y-m-d H:i', (int)($row['crdate'] ?? 0))) . '</td>'
+            . '<td><span class="pill">' . $this->escape((string)($row['status'] ?? '')) . '</span></td>'
+            . '<td>#' . (int)($row['recommendation_uid'] ?? 0) . '</td>'
+            . '<td>' . $this->escape((string)($row['action_type'] ?? '')) . '</td>'
+            . '<td>' . $this->escape((string)($row['target_table'] ?? '')) . ' #' . (int)($row['target_uid'] ?? 0) . '</td>'
+            . '<td>' . nl2br($this->escape($this->shorten((string)($row['message'] ?? ''), 180))) . '</td>'
+            . '<td>' . $actions . '</td>'
             . '</tr>';
     }
 
@@ -1557,6 +1773,11 @@ final class SeoAssistantModuleController
     private function formatDate(int $timestamp): string
     {
         return $timestamp > 0 ? date('Y-m-d', $timestamp) : '-';
+    }
+
+    private function formatDateTime(int $timestamp): string
+    {
+        return $timestamp > 0 ? date('Y-m-d H:i', $timestamp) : '-';
     }
 
     private function formatNumber(float $value, int $decimals = 0): string

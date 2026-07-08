@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\RenderedSnapshotService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -20,6 +21,7 @@ final class RenderedSnapshotCommand extends Command
     public function __construct(
         private readonly RenderedSnapshotService $renderedSnapshotService,
         private readonly ConfigurationService $configuration,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -45,6 +47,19 @@ final class RenderedSnapshotCommand extends Command
                 (bool)$input->getOption('dry-run'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Rendered snapshot command failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:rendered:snapshot',
+                    'base_url' => $input->getOption('base-url') !== null ? (string)$input->getOption('base-url') : '',
+                    'urls' => array_values(array_map('strval', (array)$input->getOption('url'))),
+                    'limit' => (int)$input->getOption('limit'),
+                    'dry_run' => (bool)$input->getOption('dry-run'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

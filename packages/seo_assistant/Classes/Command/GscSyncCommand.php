@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\SearchConsoleService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use DateTimeImmutable;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -19,6 +20,7 @@ final class GscSyncCommand extends Command
 {
     public function __construct(
         private readonly SearchConsoleService $searchConsoleService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -53,6 +55,21 @@ final class GscSyncCommand extends Command
                 (bool)$input->getOption('dry-run'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'gsc',
+                'GSC sync failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:gsc:sync',
+                    'start_date' => (string)$input->getOption('start-date'),
+                    'end_date' => (string)$input->getOption('end-date'),
+                    'site_url' => $input->getOption('site-url') !== null ? (string)$input->getOption('site-url') : '',
+                    'dimensions' => (string)$input->getOption('dimensions'),
+                    'search_type' => (string)$input->getOption('search-type'),
+                    'dry_run' => (bool)$input->getOption('dry-run'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

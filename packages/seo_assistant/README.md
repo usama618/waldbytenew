@@ -29,6 +29,7 @@ vendor/bin/typo3 seo:pages:snapshot
 vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot
 vendor/bin/typo3 seo:recommendations:generate
+vendor/bin/typo3 seo:jobs:run
 vendor/bin/typo3 seo:recommendations:verify --all
 vendor/bin/typo3 seo:recommendations:evaluate-impact --sync
 ```
@@ -65,6 +66,10 @@ Stored impact evaluations are also summarized into future AI recommendation prom
 assistant can learn from changes that improved, stayed neutral, declined, or did not have enough
 data.
 
+OpenAI, GSC and scheduled command failures are recorded in `tx_seoassistant_alert` and shown in
+the backend module until resolved. This gives cron/worker failures a visible backend surface instead
+of relying only on server logs.
+
 In the backend module, every AI memory run has a `Download suggestions` button. It downloads a
 Markdown document for that run with analyzed pages, AI recommendations, content drafts, metadata
 commands, image alt/link/schema suggestions, and local DDEV workflow notes. Use that file as the
@@ -99,26 +104,36 @@ passed. In the backend module, the Apply buttons publish generated content secti
 The backend module also shows an `Apply` button for every automatic recommendation and an
 `Apply all automatic` button above the table. Every row also has a `Reject` button. Rejected
 recommendations are marked `rejected`, hidden from the table, and excluded from future bulk apply
-runs. The buttons can also handle older `manual_review`
-rows when the extension can convert them safely from their recommendation type, for example long
-titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
-structured-data suggestions.
+runs. Single backend apply runs immediately. Backend `Apply all automatic` is queued and processed
+by `seo:jobs:run`, then writes a normal apply-history entry. Backend apply uses the same
+conservative defaults as the CLI: generated content is created as a hidden draft unless an operator
+intentionally publishes from the CLI with `--publish-content`. Older `manual_review` rows are no
+longer force-applied from the UI; use the CLI with `--force` only when you intentionally want to
+convert a legacy row.
 
 Recommendation statuses are `draft`, `approved`, `applied`, `verified`, `evaluating`, `improved`,
 `neutral`, `declined`, `rejected`, and `rolled_back`.
 
 Every backend or CLI write run is recorded in `tx_seoassistant_apply_history`. The backend module
 shows the latest apply history entries with counts for applied, already implemented, skipped and
-failed recommendations. Each entry has a `Download history` button that exports a Markdown audit
+failed recommendations. Each entry has a `View changes` button that exports a Markdown audit
 document with the per-recommendation result rows and raw JSON result. Skipped manual/template
 recommendations include current CMS/rendered frontend state and the proposed target change, so the
 download can be used as a local Codex brief before committing template changes.
 
+Before any metadata, content, image-alt, indexing or dynamic-schema write, the previous values are
+stored in `tx_seoassistant_recommendation_rollback`. The backend module exposes these snapshots and
+adds rollback buttons for a single recommendation or a full apply-history run.
+
 The same backend area also has a `Generate fresh recommendations` button. It runs the equivalent of
-the page snapshot, rendered snapshot and recommendation generation commands with configurable
-render/recommendation/AI limits, so editors can refresh AI suggestions without SSH access.
-Long-running backend actions show a blocking progress overlay until TYPO3 finishes the request and
-reloads the module.
+the page snapshot, rendered snapshot and recommendation generation commands as a queued backend job
+with configurable render/recommendation/AI limits. Run the worker from cron or manually:
+
+```bash
+vendor/bin/typo3 seo:jobs:run --limit=5
+```
+
+The backend shows recent queued jobs with status, attempts, start/finish times and failure messages.
 
 Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
 recommendations create a hidden `seo_text` element by default:
@@ -147,6 +162,12 @@ implemented. It hides rows when the current TYPO3 metadata already matches, sugg
 already visible, image alt text is already stored on matching file references, or the requested
 JSON-LD type is already present in the latest rendered snapshot.
 
+AI suggestions are validated before storage. Guardrails reject unsafe rows for overlong metadata,
+unsupported ranking/performance claims, obvious keyword stuffing, missing internal-link targets and
+invalid structured-data JSON previews. Repeated local keyword usage is stored as a warning so it can
+still be reviewed. The quality result is stored with the recommendation as `quality_status`,
+`quality_score` and `quality_json`.
+
 Applied recommendation impact can be evaluated after enough Search Console data exists:
 
 ```bash
@@ -164,7 +185,22 @@ The command stores clicks, impressions, CTR, average position, exact date window
 `evaluation_stage`, a rule-based status, and an optional OpenAI explanation in
 `tx_seoassistant_impact_evaluation`.
 Rows are shown in `Web > SEO Assistant` under `Impact Evaluations`.
+Each evaluation also stores experiment diagnostics in `evidence_json`: sample quality, traffic
+balance, confidence cap, and explicit limitations such as no holdout/control group and unisolated
+seasonality or site changes.
 
 Structured-data recommendations are stored in `tx_seoassistant_structured_data` and rendered by the
 site package JSON-LD renderer. After deploying this feature, run TYPO3 extension setup/database
-analysis once so the structured-data, apply-history, AI-call and impact-evaluation tables exist.
+analysis once so the structured-data, apply-history, AI-call, impact-evaluation, rollback, alert
+and job tables exist.
+
+## Tests
+
+Run the dependency-free SEO Assistant lifecycle checks with:
+
+```bash
+composer test:seo-assistant
+```
+
+The checks cover deterministic AI guardrails, early/final impact stage behavior, and source-level
+contracts for apply, verify and evaluate lifecycle transitions.

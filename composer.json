@@ -60,6 +60,7 @@
 	},
 	"scripts": {
 		"deploy:production": "php vendor/deployer/deployer/bin/dep deploy production -f Build/deploy.php",
-		"rollback:production": "php vendor/deployer/deployer/bin/dep rollback production -f Build/deploy.php"
+		"rollback:production": "php vendor/deployer/deployer/bin/dep rollback production -f Build/deploy.php",
+		"test:seo-assistant": "php packages/seo_assistant/Tests/run.php"
 	}
 }

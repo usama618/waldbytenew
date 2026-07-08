@@ -20,6 +20,7 @@ final class RecommendationService
         private readonly UrlNormalizer $urlNormalizer,
         private readonly OpenAiRecommendationService $openAiRecommendationService,
         private readonly AiRunHistoryService $aiRunHistoryService,
+        private readonly RecommendationGuardrailService $guardrailService,
     ) {}
 
     /**
@@ -1175,6 +1176,14 @@ final class RecommendationService
      */
     private function storeRecommendation(array $recommendation): int
     {
+        $guardrail = $this->guardrailService->validate($recommendation);
+        if (!$guardrail['valid']) {
+            return 0;
+        }
+        $recommendation['quality_status'] = $guardrail['status'];
+        $recommendation['quality_score'] = $guardrail['score'];
+        $recommendation['quality_json'] = $this->json($guardrail);
+
         $connection = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE);
         $existing = $connection->createQueryBuilder()
             ->select('uid', 'status')
@@ -1191,6 +1200,7 @@ final class RecommendationService
             'crdate' => Connection::PARAM_INT,
             'page_uid' => Connection::PARAM_INT,
             'priority' => Connection::PARAM_INT,
+            'quality_score' => Connection::PARAM_INT,
             'approved_at' => Connection::PARAM_INT,
             'applied_at' => Connection::PARAM_INT,
             'verified_at' => Connection::PARAM_INT,

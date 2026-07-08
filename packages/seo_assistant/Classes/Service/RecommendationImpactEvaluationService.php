@@ -480,6 +480,7 @@ final class RecommendationImpactEvaluationService
                 'after' => $after,
                 'delta' => $this->deltaMetrics($before, $after),
             ],
+            'experiment_design' => $this->experimentDiagnostics($before, $after, $minImpressions, $plan),
             'rule_based_evaluation' => $deterministic,
             'instruction' => 'Judge impact conservatively. Consider data volume, clicks, impressions, CTR and average position. Do not say a change worked if the data is weak or mixed.',
         ];
@@ -571,6 +572,7 @@ final class RecommendationImpactEvaluationService
             'evidence_json' => $this->json([
                 'deterministic' => $deterministic,
                 'ai' => $ai,
+                'experiment' => $context['experiment_design'] ?? [],
                 'context' => $context,
             ]),
             'evaluation_hash' => $hash,
@@ -703,6 +705,46 @@ final class RecommendationImpactEvaluationService
         }
 
         return ($current - $previous) / $previous;
+    }
+
+    /**
+     * @param array<string,mixed> $before
+     * @param array<string,mixed> $after
+     * @param array<string,mixed> $plan
+     * @return array<string,mixed>
+     */
+    private function experimentDiagnostics(array $before, array $after, int $minImpressions, array $plan): array
+    {
+        $beforeImpressions = (float)($before['impressions'] ?? 0);
+        $afterImpressions = (float)($after['impressions'] ?? 0);
+        $maxImpressions = max($beforeImpressions, $afterImpressions);
+        $minWindowImpressions = min($beforeImpressions, $afterImpressions);
+        $balanceRatio = $maxImpressions > 0 ? $minWindowImpressions / $maxImpressions : 0.0;
+        $sampleQuality = $maxImpressions >= 200 ? 'high' : ($maxImpressions >= 50 ? 'medium' : ($maxImpressions >= $minImpressions ? 'low' : 'insufficient'));
+        $limitations = [
+            'before_after_observational_only',
+            'no_holdout_or_control_page_group',
+            'seasonality_and_other_site_changes_not_isolated',
+        ];
+        if ($sampleQuality === 'insufficient' || $sampleQuality === 'low') {
+            $limitations[] = 'low_search_console_sample_size';
+        }
+        if ($balanceRatio > 0 && $balanceRatio < 0.5) {
+            $limitations[] = 'comparison_windows_have_imbalanced_impressions';
+        }
+
+        return [
+            'framework' => 'before_after_observational',
+            'control_group' => 'none',
+            'evaluation_stage' => (string)($plan['evaluationStage'] ?? ''),
+            'window_days' => (int)($plan['windowDays'] ?? 0),
+            'buffer_days' => (int)($plan['bufferDays'] ?? 0),
+            'minimum_impressions' => $minImpressions,
+            'sample_quality' => $sampleQuality,
+            'traffic_balance_ratio' => round($balanceRatio, 3),
+            'causal_confidence_cap' => $sampleQuality === 'high' && $balanceRatio >= 0.5 ? 'medium' : 'low',
+            'limitations' => $limitations,
+        ];
     }
 
     private function summaryForStatus(string $status, float $clicksDelta, float $impressionsDelta, float $ctrDelta, float $positionDelta): string

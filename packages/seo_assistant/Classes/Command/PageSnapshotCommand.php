@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\PageSnapshotService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,6 +19,7 @@ final class PageSnapshotCommand extends Command
 {
     public function __construct(
         private readonly PageSnapshotService $pageSnapshotService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -39,6 +41,17 @@ final class PageSnapshotCommand extends Command
                 (bool)$input->getOption('dry-run'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Page snapshot command failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:pages:snapshot',
+                    'base_url' => $input->getOption('base-url') !== null ? (string)$input->getOption('base-url') : '',
+                    'dry_run' => (bool)$input->getOption('dry-run'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

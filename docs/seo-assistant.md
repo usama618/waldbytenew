@@ -41,6 +41,10 @@ module shows current-month usage and recent calls. Cost is an estimate based on 
 local model price map; unknown models still log tokens but show a zero-dollar estimate until the map
 is updated.
 
+Failures from OpenAI calls, GSC sync/trend analysis and scheduled SEO Assistant commands are stored
+in `tx_seoassistant_alert`. The backend module shows open alerts and lets an operator resolve them
+after the failed cron/worker issue has been handled.
+
 Impact evaluations are fed back into future AI recommendation prompts. Recent improved, neutral,
 declined and no-data outcomes are summarized with the action type and metric deltas so future
 recommendations can favor patterns that worked and avoid repeating weak patterns.
@@ -143,10 +147,12 @@ File/template changes are reported as skipped. Content recommendations create hi
 The backend module `Web > SEO Assistant` has the same behavior, but the buttons are optimized for
 one-click use: every automatic recommendation has an `Apply` button, and the recommendations table
 has an `Apply all automatic` button. Every row also has a `Reject` button. Rejected rows are marked
-`rejected`, hidden from the table, and excluded from `Apply all automatic`. Backend apply publishes generated content sections directly.
-It can also convert older `manual_review` rows when they are database-backed, such as long title,
-long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
-and dynamic structured-data rows.
+`rejected`, hidden from the table, and excluded from `Apply all automatic`. Single backend apply
+runs immediately. Backend `Apply all automatic` is queued and processed by `seo:jobs:run`, then
+writes a normal apply-history entry. Backend apply creates generated content as hidden drafts;
+immediate publishing remains a deliberate CLI action with `--publish-content`. Older
+`manual_review` rows are no longer force-applied from the UI. Use the CLI with `--force` only when
+you intentionally want to convert a legacy database-backed row.
 
 Recommendation lifecycle statuses are:
 
@@ -157,20 +163,29 @@ Recommendation lifecycle statuses are:
 - `evaluating`: impact is still early or has insufficient data
 - `improved`, `neutral`, `declined`: impact evaluation result
 - `rejected`: manually rejected
-- `rolled_back`: reserved for rollback support
+- `rolled_back`: previous database-backed values have been restored
 
 Every write run from the backend or CLI is stored in `tx_seoassistant_apply_history`. The backend
-module shows the latest history entries and each row has a `Download history` button. The exported
+module shows the latest history entries and each row has a `View changes` button. The exported
 Markdown file contains the apply summary, per-recommendation statuses, messages and the raw result
 JSON, so live and local runs each keep their own auditable record. Manual/template recommendations
 also include the current CMS/rendered frontend state and the recommended target state, making the
 download usable as a local implementation brief before pushing code through CI/CD.
 
+Before the extension writes metadata, content, image alt text, indexing fields or dynamic schema
+rows, it stores the previous values in `tx_seoassistant_recommendation_rollback`. The backend module
+shows rollback snapshots and provides buttons to roll back one recommendation or a full apply-history
+run.
+
 The backend also has a `Generate fresh recommendations` button. It runs page snapshot, rendered
-snapshot and AI recommendation generation from the module with editable limits, so fresh suggestions
-can be created without running SSH commands manually.
-Because this can take time, the module shows a blocking progress overlay after submit until TYPO3
-finishes and the page reloads.
+snapshot and AI recommendation generation as a queued backend job with editable limits, so fresh
+suggestions can be requested without a long web request. Process queued jobs with:
+
+```bash
+vendor/bin/typo3 seo:jobs:run --limit=5
+```
+
+The backend shows recent jobs with queued/running/completed/failed status, attempts and errors.
 
 For metadata recommendations, the second command writes `pages.seo_title` and/or
 `pages.description`, records the applied field values, and sets verification to pending.
@@ -236,17 +251,28 @@ results. If the after-window is not complete yet, the recommendation stays pendi
 are too low, the result is `not_enough_data` and the recommendation status stays `evaluating`
 instead of a premature success/failure judgment.
 
+Each stored evaluation also includes experiment diagnostics in `evidence_json`: sample quality,
+traffic balance, confidence cap and limitations such as no holdout/control group, unisolated
+seasonality and other site changes. This is still observational SEO evidence, but the stored
+metadata makes that limitation explicit.
+
 The recommendation table hides rows that are already implemented. The check uses TYPO3 page
 metadata, visible content text, matched file-reference alt text, and the latest rendered JSON-LD
 snapshot where applicable. Bulk apply also marks already satisfied recommendations as implemented
 instead of writing them again.
+
+AI recommendations are validated before they are stored. Rows fail guardrails when they contain
+overlong SEO titles or descriptions, unsupported ranking/performance claims, obvious keyword
+stuffing, non-existing internal-link targets or invalid structured-data JSON previews. Repeated
+local keyword usage is kept as a warning. The backend stores `quality_status`, `quality_score` and
+`quality_json` for each row.
 
 Dynamic structured data is stored in `tx_seoassistant_structured_data` and rendered through the
 site-package JSON-LD renderer. After deploying a version that adds this table, run TYPO3 extension
 setup/database analysis once on the target environment. The same setup step creates
 `tx_seoassistant_apply_history` for downloadable apply history and
 `tx_seoassistant_ai_call` for token/cost logging and `tx_seoassistant_impact_evaluation` for
-stage-based impact checks.
+stage-based impact checks. It also creates rollback, alert and queued-job tables.
 
 ## Suggested cron
 
@@ -259,6 +285,7 @@ vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5
+vendor/bin/typo3 seo:jobs:run --limit=5
 vendor/bin/typo3 seo:recommendations:verify --all
 vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=early
 vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=first
@@ -267,3 +294,15 @@ vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=final
 ```
 
 The rendered snapshot command crawls only the configured same-host URLs. It uses CMS page snapshots and Search Console page URLs as its source list.
+
+## Tests
+
+The extension has a dependency-free lifecycle check runner:
+
+```bash
+composer test:seo-assistant
+```
+
+It covers deterministic AI suggestion guardrails, early/final impact stage behavior and source
+contracts for apply, verify and evaluate status transitions. A full TYPO3 database-backed functional
+test suite would still be the next step if you want fixture-level coverage of real writes.

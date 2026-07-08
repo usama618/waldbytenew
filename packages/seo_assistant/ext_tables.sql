@@ -140,6 +140,9 @@ CREATE TABLE tx_seoassistant_recommendation (
     proposed_seo_title varchar(512) DEFAULT '' NOT NULL,
     proposed_description text,
     evidence_json mediumtext,
+    quality_status varchar(32) DEFAULT 'not_checked' NOT NULL,
+    quality_score int(11) unsigned DEFAULT '0' NOT NULL,
+    quality_json mediumtext,
     ai_model varchar(128) DEFAULT '' NOT NULL,
     dedupe_hash varchar(64) DEFAULT '' NOT NULL,
     applied_changes_json mediumtext,
@@ -156,7 +159,30 @@ CREATE TABLE tx_seoassistant_recommendation (
     KEY query_text (query_text(191)),
     KEY status_priority (status,priority),
     KEY apply_capability (apply_capability),
+    KEY quality_status (quality_status),
     KEY verification_status (verification_status)
+);
+
+CREATE TABLE tx_seoassistant_recommendation_rollback (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    recommendation_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    action_type varchar(64) DEFAULT '' NOT NULL,
+    target_table varchar(128) DEFAULT '' NOT NULL,
+    target_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    status varchar(32) DEFAULT 'available' NOT NULL,
+    rollback_payload_json mediumtext,
+    rolled_back_at int(11) unsigned DEFAULT '0' NOT NULL,
+    rolled_back_by varchar(32) DEFAULT '' NOT NULL,
+    message text,
+
+    PRIMARY KEY (uid),
+    KEY recommendation_uid (recommendation_uid),
+    KEY status (status),
+    KEY action_type (action_type),
+    KEY target (target_table,target_uid)
 );
 
 CREATE TABLE tx_seoassistant_ai_run (
@@ -204,6 +230,48 @@ CREATE TABLE tx_seoassistant_ai_call (
     KEY model (model),
     KEY page_url (page_url(191)),
     KEY recommendation_uid (recommendation_uid)
+);
+
+CREATE TABLE tx_seoassistant_alert (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    source varchar(64) DEFAULT '' NOT NULL,
+    severity varchar(32) DEFAULT 'error' NOT NULL,
+    status varchar(32) DEFAULT 'open' NOT NULL,
+    title varchar(255) DEFAULT '' NOT NULL,
+    message text,
+    context_json mediumtext,
+    resolved_at int(11) unsigned DEFAULT '0' NOT NULL,
+
+    PRIMARY KEY (uid),
+    KEY crdate (crdate),
+    KEY source (source),
+    KEY severity (severity),
+    KEY status (status)
+);
+
+CREATE TABLE tx_seoassistant_job (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    job_type varchar(64) DEFAULT '' NOT NULL,
+    status varchar(32) DEFAULT 'queued' NOT NULL,
+    priority int(11) unsigned DEFAULT '50' NOT NULL,
+    attempts int(11) unsigned DEFAULT '0' NOT NULL,
+    queued_by varchar(32) DEFAULT 'backend' NOT NULL,
+    started_at int(11) unsigned DEFAULT '0' NOT NULL,
+    finished_at int(11) unsigned DEFAULT '0' NOT NULL,
+    payload_json mediumtext,
+    result_json mediumtext,
+    error_message text,
+
+    PRIMARY KEY (uid),
+    KEY crdate (crdate),
+    KEY job_type (job_type),
+    KEY status_priority (status,priority,crdate)
 );
 
 CREATE TABLE tx_seoassistant_structured_data (

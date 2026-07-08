@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\RecommendationImpactEvaluationService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,6 +19,7 @@ final class RecommendationsEvaluateImpactCommand extends Command
 {
     public function __construct(
         private readonly RecommendationImpactEvaluationService $impactEvaluationService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -59,6 +61,21 @@ final class RecommendationsEvaluateImpactCommand extends Command
                 (string)$input->getOption('stage'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Recommendation impact evaluation failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:recommendations:evaluate-impact',
+                    'stage' => (string)$input->getOption('stage'),
+                    'min_age_days' => (int)$input->getOption('min-age-days'),
+                    'window_days' => (int)$input->getOption('window-days'),
+                    'buffer_days' => (int)$input->getOption('buffer-days'),
+                    'sync' => (bool)$input->getOption('sync'),
+                    'dry_run' => (bool)$input->getOption('dry-run'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

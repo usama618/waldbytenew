@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\GscTrendAnalysisService;
 use App\SeoAssistant\Service\SearchConsoleService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use DateTimeImmutable;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -21,6 +22,7 @@ final class GscAnalyzeTrendsCommand extends Command
     public function __construct(
         private readonly GscTrendAnalysisService $gscTrendAnalysisService,
         private readonly SearchConsoleService $searchConsoleService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -93,6 +95,22 @@ final class GscAnalyzeTrendsCommand extends Command
                 (bool)$input->getOption('dry-run'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'gsc',
+                'GSC trend analysis failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:gsc:analyze-trends',
+                    'current_start' => $currentStart,
+                    'current_end' => $currentEnd,
+                    'previous_start' => $previousStart,
+                    'previous_end' => $previousEnd,
+                    'sync' => (bool)$input->getOption('sync'),
+                    'search_type' => $searchType,
+                    'dry_run' => (bool)$input->getOption('dry-run'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

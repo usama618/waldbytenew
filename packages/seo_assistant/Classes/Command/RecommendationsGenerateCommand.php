@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\ConfigurationService;
 use App\SeoAssistant\Service\RecommendationService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -20,6 +21,7 @@ final class RecommendationsGenerateCommand extends Command
     public function __construct(
         private readonly RecommendationService $recommendationService,
         private readonly ConfigurationService $configuration,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -45,6 +47,19 @@ final class RecommendationsGenerateCommand extends Command
                 (int)$input->getOption('ai-limit'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Recommendation generation command failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:recommendations:generate',
+                    'min_impressions' => (int)$input->getOption('min-impressions'),
+                    'limit' => (int)$input->getOption('limit'),
+                    'ai_limit' => (int)$input->getOption('ai-limit'),
+                    'disable_ai' => (bool)$input->getOption('disable-ai'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }

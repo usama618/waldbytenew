@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\RecommendationVerificationService;
 use App\SeoAssistant\Service\RenderedSnapshotService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -20,6 +21,7 @@ final class RecommendationsVerifyCommand extends Command
     public function __construct(
         private readonly RecommendationVerificationService $recommendationVerificationService,
         private readonly RenderedSnapshotService $renderedSnapshotService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -53,6 +55,7 @@ final class RecommendationsVerifyCommand extends Command
         }
 
         $rows = [];
+        $failed = false;
         foreach ($uids as $recommendationUid) {
             try {
                 if ((bool)$input->getOption('refresh')) {
@@ -71,6 +74,18 @@ final class RecommendationsVerifyCommand extends Command
                     $result['message'],
                 ];
             } catch (Throwable $exception) {
+                $failed = true;
+                $this->alertService->record(
+                    'cron',
+                    'Recommendation verification failed',
+                    $exception->getMessage(),
+                    [
+                        'command' => 'seo:recommendations:verify',
+                        'recommendation_uid' => $recommendationUid,
+                        'refresh' => (bool)$input->getOption('refresh'),
+                    ],
+                    'error'
+                );
                 $rows[] = [
                     $recommendationUid,
                     'error',
@@ -83,6 +98,6 @@ final class RecommendationsVerifyCommand extends Command
 
         $io->table(['UID', 'Status', 'Fields', 'URL', 'Message'], $rows);
 
-        return Command::SUCCESS;
+        return $failed ? Command::FAILURE : Command::SUCCESS;
     }
 }

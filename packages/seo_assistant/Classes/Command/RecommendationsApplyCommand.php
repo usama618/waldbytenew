@@ -6,6 +6,7 @@ namespace App\SeoAssistant\Command;
 
 use App\SeoAssistant\Service\ApplyHistoryService;
 use App\SeoAssistant\Service\RecommendationApplyService;
+use App\SeoAssistant\Service\SeoAssistantAlertService;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -22,6 +23,7 @@ final class RecommendationsApplyCommand extends Command
     public function __construct(
         private readonly RecommendationApplyService $recommendationApplyService,
         private readonly ApplyHistoryService $applyHistoryService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {
         parent::__construct();
     }
@@ -66,6 +68,20 @@ final class RecommendationsApplyCommand extends Command
                 (string)$input->getOption('content-ctype'),
             );
         } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Recommendation apply command failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:recommendations:apply',
+                    'uid' => $uid,
+                    'all' => false,
+                    'dry_run' => !(bool)$input->getOption('yes'),
+                    'force' => (bool)$input->getOption('force'),
+                    'publish_content' => (bool)$input->getOption('publish-content'),
+                ],
+                'error'
+            );
             $io->error($exception->getMessage());
             return Command::FAILURE;
         }
@@ -120,13 +136,33 @@ final class RecommendationsApplyCommand extends Command
 
     private function executeAll(InputInterface $input, SymfonyStyle $io): int
     {
-        $result = $this->recommendationApplyService->applyAll(
-            !(bool)$input->getOption('yes'),
-            (bool)$input->getOption('force'),
-            (bool)$input->getOption('publish-content'),
-            (string)$input->getOption('content-ctype'),
-            (int)$input->getOption('limit'),
-        );
+        try {
+            $result = $this->recommendationApplyService->applyAll(
+                !(bool)$input->getOption('yes'),
+                (bool)$input->getOption('force'),
+                (bool)$input->getOption('publish-content'),
+                (string)$input->getOption('content-ctype'),
+                (int)$input->getOption('limit'),
+            );
+        } catch (Throwable $exception) {
+            $this->alertService->record(
+                'cron',
+                'Bulk recommendation apply command failed',
+                $exception->getMessage(),
+                [
+                    'command' => 'seo:recommendations:apply',
+                    'all' => true,
+                    'limit' => (int)$input->getOption('limit'),
+                    'dry_run' => !(bool)$input->getOption('yes'),
+                    'force' => (bool)$input->getOption('force'),
+                    'publish_content' => (bool)$input->getOption('publish-content'),
+                ],
+                'error'
+            );
+            $io->error($exception->getMessage());
+            return Command::FAILURE;
+        }
+
         $historyUid = 0;
         if (!$result['dryRun']) {
             $historyUid = $this->applyHistoryService->record(

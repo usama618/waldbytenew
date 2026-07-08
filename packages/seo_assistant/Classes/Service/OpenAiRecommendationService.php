@@ -13,6 +13,7 @@ final class OpenAiRecommendationService
         private readonly ConfigurationService $configuration,
         private readonly RequestFactory $requestFactory,
         private readonly AiUsageLogService $aiUsageLogService,
+        private readonly SeoAssistantAlertService $alertService,
     ) {}
 
     public function isConfigured(): bool
@@ -414,6 +415,24 @@ final class OpenAiRecommendationService
             );
         } catch (Throwable) {
             // Usage logging must never break recommendation generation.
+        }
+
+        if ($status !== 'success') {
+            try {
+                $this->alertService->record(
+                    'openai',
+                    'OpenAI ' . $runType . ' failed',
+                    $errorMessage !== '' ? $errorMessage : 'OpenAI call failed without a detailed error message.',
+                    [
+                        'run_type' => $runType,
+                        'model' => $this->configuration->getOpenAiModel(),
+                        'request_hash' => $this->requestHash($runType, $context),
+                    ],
+                    'error'
+                );
+            } catch (Throwable) {
+                // Alerting must never break recommendation generation.
+            }
         }
     }
 
