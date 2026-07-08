@@ -12,10 +12,14 @@ final class RecommendationApplyService
 {
     private const RECOMMENDATION_TABLE = 'tx_seoassistant_recommendation';
     private const CONTENT_TABLE = 'tt_content';
+    private const PAGE_SNAPSHOT_TABLE = 'tx_seoassistant_page_snapshot';
+    private const RENDERED_SNAPSHOT_TABLE = 'tx_seoassistant_rendered_snapshot';
     private const DEFAULT_CONTENT_CTYPE = 'seo_text';
+    private const AUTO_APPLY_CAPABILITIES = ['safe_metadata', 'content_draft', 'image_alt'];
 
     public function __construct(
         private readonly ConnectionPool $connectionPool,
+        private readonly UrlNormalizer $urlNormalizer,
     ) {}
 
     /**
@@ -46,6 +50,14 @@ final class RecommendationApplyService
         $action = $this->extractAction($recommendation);
         $actionType = $action['actionType'];
         $applyCapability = $action['applyCapability'];
+        $implementedState = $this->implementedState($recommendation, $pageUid, $action);
+        if ($implementedState['implemented']) {
+            if (!$dryRun) {
+                $this->markRecommendationImplemented($recommendationUid, $pageUid, $implementedState);
+            }
+
+            return $this->alreadyImplementedResult($recommendationUid, $pageUid, $action, $dryRun, $implementedState['message']);
+        }
 
         if ($actionType === 'metadata_update') {
             return $this->applyMetadataRecommendation($recommendationUid, $pageUid, $action, $dryRun, $force);
@@ -69,6 +81,369 @@ final class RecommendationApplyService
         }
 
         throw new RuntimeException('Recommendation action "' . $actionType . '" is manual and cannot be applied automatically.', 1760000045);
+    }
+
+    /**
+     * @return array{dryRun:bool,total:int,applied:int,alreadyImplemented:int,skipped:int,failed:int,rows:list<array<string,mixed>>}
+     */
+    public function applyAll(
+        bool $dryRun = true,
+        bool $force = false,
+        bool $publishContent = false,
+        string $contentCType = self::DEFAULT_CONTENT_CTYPE,
+        int $limit = 100,
+    ): array {
+        $recommendations = $this->fetchAutomaticRecommendations($limit, $force);
+        $rows = [];
+        $applied = 0;
+        $alreadyImplemented = 0;
+        $skipped = 0;
+        $failed = 0;
+
+        foreach ($recommendations as $recommendation) {
+            $uid = (int)($recommendation['uid'] ?? 0);
+            if ($uid <= 0) {
+                continue;
+            }
+
+            $pageUid = (int)($recommendation['page_uid'] ?? 0);
+            if ($pageUid <= 0) {
+                $pageUid = $this->resolvePageUidFromUrl((string)($recommendation['page_url'] ?? ''));
+            }
+            $action = $this->extractAction($recommendation);
+            $implementedState = $pageUid > 0
+                ? $this->implementedState($recommendation, $pageUid, $action)
+                : ['implemented' => false, 'message' => 'Page could not be resolved.', 'checks' => []];
+
+            if ($implementedState['implemented']) {
+                if (!$dryRun && $pageUid > 0) {
+                    $this->markRecommendationImplemented($uid, $pageUid, $implementedState);
+                }
+                $alreadyImplemented++;
+                $rows[] = [
+                    'uid' => $uid,
+                    'status' => 'already_implemented',
+                    'action' => $action['actionType'],
+                    'capability' => $action['applyCapability'],
+                    'message' => $implementedState['message'],
+                ];
+                continue;
+            }
+
+            if (!in_array($action['applyCapability'], self::AUTO_APPLY_CAPABILITIES, true)) {
+                $skipped++;
+                $rows[] = [
+                    'uid' => $uid,
+                    'status' => 'skipped',
+                    'action' => $action['actionType'],
+                    'capability' => $action['applyCapability'],
+                    'message' => 'Manual recommendation cannot be applied automatically.',
+                ];
+                continue;
+            }
+
+            try {
+                $result = $this->apply($uid, $dryRun, $force, $publishContent, $contentCType);
+                if (($result['alreadyImplemented'] ?? false) === true) {
+                    $alreadyImplemented++;
+                    $status = 'already_implemented';
+                } else {
+                    $applied++;
+                    $status = $dryRun ? 'would_apply' : 'applied';
+                }
+                $rows[] = [
+                    'uid' => $uid,
+                    'status' => $status,
+                    'action' => $result['actionType'],
+                    'capability' => $result['applyCapability'],
+                    'message' => implode(', ', $result['changedFields']) ?: (string)($result['message'] ?? ''),
+                ];
+            } catch (RuntimeException $exception) {
+                $failed++;
+                $rows[] = [
+                    'uid' => $uid,
+                    'status' => 'error',
+                    'action' => $action['actionType'],
+                    'capability' => $action['applyCapability'],
+                    'message' => $exception->getMessage(),
+                ];
+            }
+        }
+
+        return [
+            'dryRun' => $dryRun,
+            'total' => count($recommendations),
+            'applied' => $applied,
+            'alreadyImplemented' => $alreadyImplemented,
+            'skipped' => $skipped,
+            'failed' => $failed,
+            'rows' => $rows,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     */
+    public function isAlreadyImplemented(array $recommendation): bool
+    {
+        $pageUid = (int)($recommendation['page_uid'] ?? 0);
+        if ($pageUid <= 0) {
+            $pageUid = $this->resolvePageUidFromUrl((string)($recommendation['page_url'] ?? ''));
+        }
+        if ($pageUid <= 0) {
+            return false;
+        }
+
+        return $this->implementedState($recommendation, $pageUid, $this->extractAction($recommendation))['implemented'];
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function fetchAutomaticRecommendations(int $limit, bool $force): array
+    {
+        $limit = max(1, min(500, $limit));
+        $queryBuilder = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+            ->createQueryBuilder();
+        $queryBuilder
+            ->select('*')
+            ->from(self::RECOMMENDATION_TABLE)
+            ->orderBy('priority', 'DESC')
+            ->addOrderBy('tstamp', 'DESC')
+            ->setMaxResults($limit * 3);
+
+        if ($force) {
+            $queryBuilder
+                ->where($queryBuilder->expr()->notIn('status', ':excludedStatuses'))
+                ->setParameter('excludedStatuses', ['applied', 'implemented', 'dismissed'], Connection::PARAM_STR_ARRAY);
+        } else {
+            $queryBuilder
+                ->where($queryBuilder->expr()->in('status', ':statuses'))
+                ->setParameter('statuses', ['draft', 'approved'], Connection::PARAM_STR_ARRAY);
+        }
+
+        return array_slice($queryBuilder->executeQuery()->fetchAllAssociative(), 0, $limit);
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string,payload:array<string,mixed>} $action
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function implementedState(array $recommendation, int $pageUid, array $action): array
+    {
+        return match ($action['actionType']) {
+            'metadata_update' => $this->metadataImplementedState($recommendation, $pageUid, $action),
+            'content_gap_brief' => $this->contentImplementedState($pageUid, $action),
+            'image_alt_suggestion' => $this->imageAltImplementedState($pageUid, $action),
+            'structured_data_suggestion' => $this->structuredDataImplementedState($recommendation, $action),
+            default => [
+                'implemented' => false,
+                'message' => 'No automatic implementation check exists for this action.',
+                'checks' => [],
+            ],
+        };
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{seoTitle:string,description:string} $action
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function metadataImplementedState(array $recommendation, int $pageUid, array $action): array
+    {
+        $metadata = $this->fetchPageMetadata($pageUid);
+        $renderedSnapshot = $this->fetchRenderedSnapshot((string)($recommendation['page_url'] ?? ''));
+        $checks = [];
+
+        if ($action['seoTitle'] !== '') {
+            $pageValue = (string)($metadata['seo_title'] ?? '');
+            $renderedValue = (string)($renderedSnapshot['html_title'] ?? '');
+            $checks['seo_title'] = [
+                'expected' => $action['seoTitle'],
+                'page_value' => $pageValue,
+                'rendered_value' => $renderedValue,
+                'matched' => $this->metadataMatches($action['seoTitle'], $pageValue)
+                    || $this->metadataMatches($action['seoTitle'], $renderedValue),
+            ];
+        }
+
+        if ($action['description'] !== '') {
+            $pageValue = (string)($metadata['description'] ?? '');
+            $renderedValue = (string)($renderedSnapshot['meta_description'] ?? '');
+            $checks['description'] = [
+                'expected' => $action['description'],
+                'page_value' => $pageValue,
+                'rendered_value' => $renderedValue,
+                'matched' => $this->metadataMatches($action['description'], $pageValue)
+                    || $this->metadataMatches($action['description'], $renderedValue),
+            ];
+        }
+
+        return $this->stateFromChecks($checks, 'Recommended metadata already matches the page.');
+    }
+
+    /**
+     * @param array{payload:array<string,mixed>} $action
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function contentImplementedState(int $pageUid, array $action): array
+    {
+        $payload = $action['payload'];
+        $contentText = $this->normalizeText($this->fetchVisibleContentText($pageUid));
+        $checks = [];
+        $header = $this->normalizeText((string)($payload['content_element_header'] ?? ''));
+        if ($header !== '') {
+            $checks['content_header'] = [
+                'expected' => $header,
+                'matched' => str_contains($contentText, $header),
+            ];
+        }
+
+        $bodyText = $this->cleanText((string)($payload['content_body_html'] ?? $payload['content_brief'] ?? ''));
+        $bodyNeedle = $this->contentNeedle($bodyText);
+        if ($bodyNeedle !== '') {
+            $checks['content_body'] = [
+                'expected' => $bodyNeedle,
+                'matched' => str_contains($contentText, $this->normalizeText($bodyNeedle)),
+            ];
+        }
+
+        return $this->stateFromChecks($checks, 'Recommended content is already visible on the page.');
+    }
+
+    /**
+     * @param array{payload:array<string,mixed>} $action
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function imageAltImplementedState(int $pageUid, array $action): array
+    {
+        $suggestions = $this->imageAltSuggestions($action['payload']['image_alt_suggestions'] ?? []);
+        if ($suggestions === []) {
+            return [
+                'implemented' => false,
+                'message' => 'No usable image alt suggestions exist.',
+                'checks' => [],
+            ];
+        }
+
+        $references = $this->fetchImageReferencesForPage($pageUid);
+        $checks = [];
+        foreach ($suggestions as $index => $suggestion) {
+            $matchedReferences = $this->matchImageReferences($suggestion['src'], $references);
+            $currentAlt = count($matchedReferences) === 1 ? (string)($matchedReferences[0]['alternative'] ?? '') : '';
+            $checks['image_' . ($index + 1)] = [
+                'src' => $suggestion['src'],
+                'expected' => $suggestion['alt_text'],
+                'current' => $currentAlt,
+                'matched' => count($matchedReferences) === 1
+                    && $this->normalizeText($currentAlt) === $this->normalizeText($suggestion['alt_text']),
+            ];
+        }
+
+        return $this->stateFromChecks($checks, 'Recommended image alt text is already stored on the page file references.');
+    }
+
+    /**
+     * @param array<string,mixed> $recommendation
+     * @param array{payload:array<string,mixed>} $action
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function structuredDataImplementedState(array $recommendation, array $action): array
+    {
+        $schemaType = trim((string)($action['payload']['structured_data_type'] ?? ''));
+        if ($schemaType === '') {
+            return [
+                'implemented' => false,
+                'message' => 'No structured data type was provided.',
+                'checks' => [],
+            ];
+        }
+
+        $renderedSnapshot = $this->fetchRenderedSnapshot((string)($recommendation['page_url'] ?? ''));
+        $pageUrl = (string)($recommendation['page_url'] ?? '');
+        $structuredData = $this->decodeJson((string)($renderedSnapshot['structured_data_json'] ?? '[]'));
+        $checks = [
+            'structured_data_type' => [
+                'expected' => $schemaType,
+                'matched' => $this->jsonContainsSchemaTypeForPage($structuredData, $schemaType, $pageUrl),
+            ],
+        ];
+
+        return $this->stateFromChecks($checks, 'Recommended structured data type is already rendered.');
+    }
+
+    /**
+     * @param array<string,mixed> $checks
+     * @return array{implemented:bool,message:string,checks:array<string,mixed>}
+     */
+    private function stateFromChecks(array $checks, string $successMessage): array
+    {
+        if ($checks === []) {
+            return [
+                'implemented' => false,
+                'message' => 'No automatic implementation checks could be built.',
+                'checks' => [],
+            ];
+        }
+
+        $failed = array_filter($checks, static fn(array $check): bool => ($check['matched'] ?? false) !== true);
+        return [
+            'implemented' => $failed === [],
+            'message' => $failed === [] ? $successMessage : 'Recommendation is not implemented yet.',
+            'checks' => $checks,
+        ];
+    }
+
+    /**
+     * @param array{actionType:string,applyCapability:string,seoTitle:string,description:string} $action
+     * @return array<string,mixed>
+     */
+    private function alreadyImplementedResult(int $recommendationUid, int $pageUid, array $action, bool $dryRun, string $message): array
+    {
+        return [
+            'uid' => $recommendationUid,
+            'pageUid' => $pageUid,
+            'actionType' => $action['actionType'],
+            'applyCapability' => $action['applyCapability'],
+            'seoTitle' => $action['seoTitle'],
+            'description' => $action['description'],
+            'changedFields' => [],
+            'dryRun' => $dryRun,
+            'contentUid' => 0,
+            'contentHidden' => false,
+            'contentHeader' => '',
+            'imageAltUpdated' => 0,
+            'imageAltSkipped' => 0,
+            'alreadyImplemented' => true,
+            'message' => $message,
+        ];
+    }
+
+    /**
+     * @param array{implemented:bool,message:string,checks:array<string,mixed>} $implementedState
+     */
+    private function markRecommendationImplemented(int $recommendationUid, int $pageUid, array $implementedState): void
+    {
+        $now = time();
+        $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
+            ->update(
+                self::RECOMMENDATION_TABLE,
+                [
+                    'page_uid' => $pageUid,
+                    'status' => 'implemented',
+                    'verification_status' => 'verified',
+                    'verification_json' => $this->json($implementedState),
+                    'verified_at' => $now,
+                    'tstamp' => $now,
+                ],
+                ['uid' => $recommendationUid],
+                [
+                    'page_uid' => Connection::PARAM_INT,
+                    'verified_at' => Connection::PARAM_INT,
+                    'tstamp' => Connection::PARAM_INT,
+                ]
+            );
     }
 
     /**
@@ -170,6 +545,8 @@ final class RecommendationApplyService
             'contentHeader' => '',
             'imageAltUpdated' => 0,
             'imageAltSkipped' => 0,
+            'alreadyImplemented' => false,
+            'message' => '',
         ];
     }
 
@@ -294,6 +671,8 @@ final class RecommendationApplyService
             'contentHeader' => $contentDraft['header'],
             'imageAltUpdated' => 0,
             'imageAltSkipped' => 0,
+            'alreadyImplemented' => false,
+            'message' => '',
         ];
     }
 
@@ -422,6 +801,8 @@ final class RecommendationApplyService
             'contentHeader' => '',
             'imageAltUpdated' => count($matches),
             'imageAltSkipped' => count($skipped),
+            'alreadyImplemented' => false,
+            'message' => '',
         ];
     }
 
@@ -763,6 +1144,186 @@ final class RecommendationApplyService
         }
 
         return array_values($unique);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function fetchRenderedSnapshot(string $pageUrl): ?array
+    {
+        if ($pageUrl === '') {
+            return null;
+        }
+
+        $row = $this->connectionPool->getConnectionForTable(self::RENDERED_SNAPSHOT_TABLE)
+            ->createQueryBuilder()
+            ->select('*')
+            ->from(self::RENDERED_SNAPSHOT_TABLE)
+            ->where('url_hash = :urlHash')
+            ->setParameter('urlHash', hash('sha256', $this->urlNormalizer->normalize($pageUrl)))
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchAssociative();
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function fetchVisibleContentText(int $pageUid): string
+    {
+        $parts = [];
+        $snapshot = $this->connectionPool->getConnectionForTable(self::PAGE_SNAPSHOT_TABLE)
+            ->createQueryBuilder()
+            ->select('content_text')
+            ->from(self::PAGE_SNAPSHOT_TABLE)
+            ->where('page_uid = :pageUid')
+            ->setParameter('pageUid', $pageUid, Connection::PARAM_INT)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+        if (is_string($snapshot) && trim($snapshot) !== '') {
+            $parts[] = $snapshot;
+        }
+
+        $connection = $this->connectionPool->getConnectionForTable(self::CONTENT_TABLE);
+        $columns = $connection->getSchemaInformation()->listTableColumnNames(self::CONTENT_TABLE);
+        if (!in_array('pid', $columns, true)) {
+            return implode(' ', $parts);
+        }
+
+        $select = array_values(array_intersect(['header', 'subheader', 'bodytext'], $columns));
+        if ($select === []) {
+            return implode(' ', $parts);
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $queryBuilder
+            ->select(...$select)
+            ->from(self::CONTENT_TABLE)
+            ->where('pid = :pid')
+            ->setParameter('pid', $pageUid, Connection::PARAM_INT);
+
+        if (in_array('deleted', $columns, true)) {
+            $queryBuilder->andWhere('deleted = 0');
+        }
+        if (in_array('hidden', $columns, true)) {
+            $queryBuilder->andWhere('hidden = 0');
+        }
+        if (in_array('sys_language_uid', $columns, true)) {
+            $queryBuilder->andWhere('sys_language_uid IN (0, -1)');
+        }
+
+        foreach ($queryBuilder->executeQuery()->fetchAllAssociative() as $row) {
+            foreach ($select as $column) {
+                $value = trim($this->cleanText((string)($row[$column] ?? '')));
+                if ($value !== '') {
+                    $parts[] = $value;
+                }
+            }
+        }
+
+        return implode(' ', $parts);
+    }
+
+    private function contentNeedle(string $bodyText): string
+    {
+        $bodyText = $this->cleanText($bodyText);
+        if (mb_strlen($bodyText) < 30) {
+            return '';
+        }
+
+        foreach (preg_split('/[.!?]\s+/u', $bodyText, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $sentence) {
+            $sentence = trim($sentence);
+            if (mb_strlen($sentence) >= 45) {
+                return mb_substr($sentence, 0, 140);
+            }
+        }
+
+        return mb_substr($bodyText, 0, 140);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decodeJson(string $json): array
+    {
+        $data = json_decode($json, true);
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function jsonContainsSchemaTypeForPage($value, string $schemaType, string $pageUrl): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        $expected = $this->normalizeText($schemaType);
+        foreach ($value as $key => $item) {
+            if ($key === '@type') {
+                $types = is_array($item) ? $item : [$item];
+                foreach ($types as $type) {
+                    if ($this->normalizeText((string)$type) === $expected) {
+                        return $expected === 'service'
+                            ? $this->schemaObjectReferencesPage($value, $pageUrl)
+                            : true;
+                    }
+                }
+            }
+
+            if (is_array($item) && $this->jsonContainsSchemaTypeForPage($item, $schemaType, $pageUrl)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string,mixed> $schema
+     */
+    private function schemaObjectReferencesPage(array $schema, string $pageUrl): bool
+    {
+        $normalizedPageUrl = $this->urlNormalizer->normalize($pageUrl);
+        $pagePath = (string)(parse_url($normalizedPageUrl, PHP_URL_PATH) ?: '');
+        foreach (['@id', 'url', 'mainEntityOfPage'] as $field) {
+            $candidate = $schema[$field] ?? '';
+            if (is_array($candidate)) {
+                $candidate = (string)($candidate['@id'] ?? $candidate['url'] ?? '');
+            }
+            $candidate = $this->urlNormalizer->normalize((string)$candidate);
+            if ($candidate === '') {
+                continue;
+            }
+            if ($candidate === $normalizedPageUrl || str_starts_with($candidate, rtrim($normalizedPageUrl, '/') . '#')) {
+                return true;
+            }
+            if ($pagePath !== '' && $pagePath !== '/' && str_contains((string)(parse_url($candidate, PHP_URL_PATH) ?: ''), $pagePath)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function metadataMatches(string $expected, string $actual): bool
+    {
+        $expected = $this->normalizeText($expected);
+        $actual = $this->normalizeText($actual);
+        if ($expected === '' || $actual === '') {
+            return false;
+        }
+
+        return $expected === $actual
+            || str_contains($actual, $expected)
+            || str_contains($expected, $actual);
+    }
+
+    private function normalizeText(string $value): string
+    {
+        return mb_strtolower($this->cleanText($value));
     }
 
     /**

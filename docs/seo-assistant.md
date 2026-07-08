@@ -116,6 +116,21 @@ vendor/bin/typo3 seo:recommendations:apply --uid=123
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
+You can also process all automatic recommendations in one run:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --all
+vendor/bin/typo3 seo:recommendations:apply --all --yes
+```
+
+`--all` is intentionally conservative. It applies only `safe_metadata`, `content_draft`, and
+`image_alt` recommendations. Manual template/schema/internal-link/indexing suggestions are
+reported as skipped. Content recommendations create hidden drafts unless `--publish-content` is
+also passed.
+
+The backend module `Web > SEO Assistant` has the same behavior: every automatic recommendation has
+an `Apply` button, and the recommendations table has an `Apply all automatic` button.
+
 For metadata recommendations, the second command writes `pages.seo_title` and/or
 `pages.description`, records the applied field values, and sets verification to pending.
 
@@ -144,6 +159,11 @@ vendor/bin/typo3 seo:recommendations:verify --all --refresh
 
 The `--refresh` option re-runs a rendered snapshot for the affected URL before comparing applied
 metadata or image alt text with the current frontend HTML.
+
+The recommendation table hides rows that are already implemented. The check uses TYPO3 page
+metadata, visible content text, matched file-reference alt text, and the latest rendered JSON-LD
+snapshot where applicable. Bulk apply also marks already satisfied recommendations as implemented
+instead of writing them again.
 
 ## Suggested cron
 

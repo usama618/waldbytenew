@@ -73,6 +73,20 @@ Applying a recommendation is intentionally explicit:
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
+To review or apply all automatic recommendations from the CLI:
+
+```bash
+vendor/bin/typo3 seo:recommendations:apply --all
+vendor/bin/typo3 seo:recommendations:apply --all --yes
+```
+
+Bulk apply only writes recommendations that are safe for database automation:
+`safe_metadata`, `content_draft`, and `image_alt`. Manual template/schema/indexing items are
+skipped. Content drafts stay hidden unless `--publish-content` is passed.
+
+The backend module also shows an `Apply` button for every automatic recommendation and an
+`Apply all automatic` button above the table.
+
 Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
 recommendations create a hidden `seo_text` element by default:
 
@@ -94,3 +108,8 @@ HTML contains the change:
 ```bash
 vendor/bin/typo3 seo:recommendations:verify --uid=123 --refresh
 ```
+
+Before showing or bulk-applying rows, the extension checks whether a recommendation is already
+implemented. It hides rows when the current TYPO3 metadata already matches, suggested content is
+already visible, image alt text is already stored on matching file references, or the requested
+JSON-LD type is already present in the latest rendered snapshot.

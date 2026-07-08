@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\SeoAssistant\Controller;
 
+use App\SeoAssistant\Service\RecommendationApplyService;
 use App\SeoAssistant\Service\UrlNormalizer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\FormProtection\FormProtectionFactory;
 use TYPO3\CMS\Core\Http\HtmlResponse;
+use Throwable;
 
 final class SeoAssistantModuleController
 {
@@ -23,6 +26,8 @@ final class SeoAssistantModuleController
     public function __construct(
         private readonly ConnectionPool $connectionPool,
         private readonly UrlNormalizer $urlNormalizer,
+        private readonly RecommendationApplyService $recommendationApplyService,
+        private readonly FormProtectionFactory $formProtectionFactory,
     ) {}
 
     public function handleRequest(ServerRequestInterface $request): ResponseInterface
@@ -32,10 +37,80 @@ final class SeoAssistantModuleController
             return $this->downloadAiRunDocument($downloadRunUid);
         }
 
-        return new HtmlResponse($this->render());
+        $notice = null;
+        if (strtoupper($request->getMethod()) === 'POST') {
+            $notice = $this->handlePost($request);
+        }
+
+        return new HtmlResponse($this->render($request, $notice));
     }
 
-    private function render(): string
+    /**
+     * @return array{type:string,message:string}|null
+     */
+    private function handlePost(ServerRequestInterface $request): ?array
+    {
+        $parsedBody = $request->getParsedBody();
+        if (!is_array($parsedBody)) {
+            $parsedBody = [];
+        }
+
+        $formProtection = $this->formProtectionFactory->createFromRequest($request);
+        if (!$formProtection->validateToken((string)($parsedBody['formToken'] ?? ''), 'seo_assistant', 'recommendation_action')) {
+            return [
+                'type' => 'error',
+                'message' => 'Invalid request token. Reload the module and try again.',
+            ];
+        }
+
+        try {
+            $action = (string)($parsedBody['action'] ?? '');
+            if ($action === 'applyRecommendation') {
+                $uid = (int)($parsedBody['uid'] ?? 0);
+                if ($uid <= 0) {
+                    return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
+                }
+
+                $result = $this->recommendationApplyService->apply($uid, false, false, false, 'seo_text');
+                if (($result['alreadyImplemented'] ?? false) === true) {
+                    return [
+                        'type' => 'success',
+                        'message' => 'Recommendation #' . $uid . ' was already implemented and has been hidden.',
+                    ];
+                }
+
+                return [
+                    'type' => 'success',
+                    'message' => 'Recommendation #' . $uid . ' applied. Content recommendations are created as hidden drafts.',
+                ];
+            }
+
+            if ($action === 'applyAllRecommendations') {
+                $limit = max(1, min(500, (int)($parsedBody['limit'] ?? 100)));
+                $result = $this->recommendationApplyService->applyAll(false, false, false, 'seo_text', $limit);
+
+                return [
+                    'type' => $result['failed'] > 0 ? 'error' : 'success',
+                    'message' => 'Bulk apply complete: applied ' . $result['applied']
+                        . ', already implemented ' . $result['alreadyImplemented']
+                        . ', skipped manual ' . $result['skipped']
+                        . ', failed ' . $result['failed'] . '.',
+                ];
+            }
+
+            return ['type' => 'error', 'message' => 'Unknown SEO Assistant action.'];
+        } catch (Throwable $exception) {
+            return [
+                'type' => 'error',
+                'message' => $exception->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * @param array{type:string,message:string}|null $notice
+     */
+    private function render(ServerRequestInterface $request, ?array $notice = null): string
     {
         $missingTables = $this->findMissingTables();
         if ($missingTables !== []) {
@@ -48,6 +123,9 @@ final class SeoAssistantModuleController
         $renderedSnapshots = $this->fetchRenderedSnapshots();
         $pageSnapshots = $this->fetchPageSnapshots();
         $stats = $this->fetchStats();
+        $formToken = $this->formProtectionFactory
+            ->createFromRequest($request)
+            ->generateToken('seo_assistant', 'recommendation_action');
 
         return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>SEO Assistant</title>'
             . '<style>'
@@ -72,18 +150,26 @@ final class SeoAssistantModuleController
             . '.pill-notice{background:#e0f2fe;color:#075985;}'
             . '.button{display:inline-block;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#1f2933;padding:5px 8px;text-decoration:none;font-size:12px;}'
             . '.button:hover{background:#eef1f4;}'
+            . '.inline-form{display:inline;margin:0;}'
+            . '.actions{display:flex;align-items:center;gap:8px;margin:0 0 10px;}'
+            . '.actions input{width:70px;border:1px solid #cbd5e1;border-radius:4px;padding:5px 7px;}'
+            . '.notice{border:1px solid #d9dde3;border-radius:6px;padding:10px 12px;margin:14px 0;background:#fff;}'
+            . '.notice-success{border-color:#bbf7d0;background:#f0fdf4;color:#166534;}'
+            . '.notice-error{border-color:#fecaca;background:#fef2f2;color:#991b1b;}'
             . '.issues{display:flex;gap:5px;flex-wrap:wrap;}'
             . 'code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:normal;}'
             . '</style></head><body>'
             . '<h1>SEO Assistant</h1>'
             . '<p class="muted">Central overview for Search Console, rendered frontend audits, CMS content snapshots and reviewable recommendations.</p>'
+            . $this->renderNotice($notice)
             . $this->renderStats($stats)
             . '<h2>GSC Trend Insights</h2>'
             . '<div class="panel">' . $this->renderGscInsightsTable($gscInsights) . '</div>'
             . '<h2>AI Run Memory</h2>'
             . '<div class="panel">' . $this->renderAiRunsTable($aiRuns) . '</div>'
             . '<h2>Recommendations</h2>'
-            . '<div class="panel">' . $this->renderRecommendationsTable($recommendations) . '</div>'
+            . $this->renderRecommendationActions($formToken)
+            . '<div class="panel">' . $this->renderRecommendationsTable($recommendations, $formToken) . '</div>'
             . '<h2>Rendered URL Audit</h2>'
             . '<div class="panel">' . $this->renderRenderedSnapshotsTable($renderedSnapshots) . '</div>'
             . '<h2>CMS Content Snapshots</h2>'
@@ -581,19 +667,28 @@ final class SeoAssistantModuleController
     private function fetchRecommendations(): array
     {
         $currentPageUrls = $this->fetchCurrentPageUrlKeys();
-        $rows = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE)
-            ->createQueryBuilder()
+        $connection = $this->connectionPool->getConnectionForTable(self::RECOMMENDATION_TABLE);
+        $queryBuilder = $connection->createQueryBuilder();
+        $rows = $queryBuilder
             ->select('*')
             ->from(self::RECOMMENDATION_TABLE)
-            ->where('status <> :appliedStatus')
+            ->where($queryBuilder->expr()->notIn('status', ':hiddenStatuses'))
             ->orderBy('priority', 'DESC')
             ->addOrderBy('tstamp', 'DESC')
             ->setMaxResults(500)
-            ->setParameter('appliedStatus', 'applied')
+            ->setParameter('hiddenStatuses', ['applied', 'implemented', 'dismissed'], Connection::PARAM_STR_ARRAY)
             ->executeQuery()
             ->fetchAllAssociative();
 
-        return array_slice($this->filterRowsByCurrentUrl($rows, 'page_url', $currentPageUrls), 0, 100);
+        $rows = $this->filterRowsByCurrentUrl($rows, 'page_url', $currentPageUrls);
+        $visible = [];
+        foreach ($rows as $row) {
+            if (!$this->recommendationApplyService->isAlreadyImplemented($row)) {
+                $visible[] = $row;
+            }
+        }
+
+        return array_slice($visible, 0, 100);
     }
 
     /**
@@ -720,6 +815,30 @@ final class SeoAssistantModuleController
     }
 
     /**
+     * @param array{type:string,message:string}|null $notice
+     */
+    private function renderNotice(?array $notice): string
+    {
+        if ($notice === null || (string)($notice['message'] ?? '') === '') {
+            return '';
+        }
+
+        $type = (string)($notice['type'] ?? 'success') === 'error' ? 'error' : 'success';
+        return '<div class="notice notice-' . $type . '">' . $this->escape((string)$notice['message']) . '</div>';
+    }
+
+    private function renderRecommendationActions(string $formToken): string
+    {
+        return '<form method="post" class="actions">'
+            . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+            . '<input type="hidden" name="action" value="applyAllRecommendations">'
+            . '<button class="button" type="submit">Apply all automatic</button>'
+            . '<label class="muted">Limit <input type="number" name="limit" value="100" min="1" max="500"></label>'
+            . '<span class="muted">Applies metadata, content drafts and image alt text. Manual template/schema items are skipped.</span>'
+            . '</form>';
+    }
+
+    /**
      * @param list<array<string,mixed>> $insights
      */
     private function renderGscInsightsTable(array $insights): string
@@ -779,13 +898,13 @@ final class SeoAssistantModuleController
     /**
      * @param list<array<string,mixed>> $recommendations
      */
-    private function renderRecommendationsTable(array $recommendations): string
+    private function renderRecommendationsTable(array $recommendations, string $formToken): string
     {
         return '<table><thead><tr>'
-            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Command</th>'
+            . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Apply</th><th>Command</th>'
             . '</tr></thead><tbody>'
-            . ($recommendations === [] ? '<tr><td colspan="12" class="muted">No recommendations yet. Run the snapshot and generate commands first.</td></tr>' : '')
-            . implode('', array_map($this->renderRecommendationRow(...), $recommendations))
+            . ($recommendations === [] ? '<tr><td colspan="13" class="muted">No recommendations need action. Run the snapshot and generate commands when you want a fresh audit.</td></tr>' : '')
+            . implode('', array_map(fn(array $row): string => $this->renderRecommendationRow($row, $formToken), $recommendations))
             . '</tbody></table>';
     }
 
@@ -835,7 +954,7 @@ final class SeoAssistantModuleController
     /**
      * @param array<string,mixed> $row
      */
-    private function renderRecommendationRow(array $row): string
+    private function renderRecommendationRow(array $row, string $formToken): string
     {
         $payload = json_decode((string)($row['action_payload_json'] ?? '{}'), true);
         if (!is_array($payload)) {
@@ -912,6 +1031,15 @@ final class SeoAssistantModuleController
                 ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
                 : 'Apply first';
         }
+        $canApplyAutomatically = $legacySafeMetadata || in_array($applyCapability, ['safe_metadata', 'content_draft', 'image_alt'], true);
+        $applyControl = $canApplyAutomatically
+            ? '<form method="post" class="inline-form">'
+                . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
+                . '<input type="hidden" name="action" value="applyRecommendation">'
+                . '<input type="hidden" name="uid" value="' . (int)$row['uid'] . '">'
+                . '<button class="button" type="submit">Apply</button>'
+                . '</form>'
+            : '<span class="muted">Manual</span>';
 
         return '<tr>'
             . '<td>' . (int)($row['uid'] ?? 0) . '</td>'
@@ -925,6 +1053,7 @@ final class SeoAssistantModuleController
             . '<td>' . nl2br($this->escape((string)($row['recommendation'] ?? ''))) . '</td>'
             . '<td>' . $metadata . '</td>'
             . '<td><span class="pill">' . $this->escape((string)($row['verification_status'] ?? 'not_checked')) . '</span></td>'
+            . '<td>' . $applyControl . '</td>'
             . '<td><code>' . $this->escape($applyCommand) . '</code><br><code>' . $this->escape($secondCommand) . '</code></td>'
             . '</tr>';
     }

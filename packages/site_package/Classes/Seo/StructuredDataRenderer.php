@@ -163,6 +163,15 @@ final class StructuredDataRenderer
                 'serviceType' => 'Technische SEO und Performance-Optimierung',
                 'description' => 'Technische SEO, Content-Struktur, Ladezeit, Indexierung und Conversion-Optimierung für bessere Sichtbarkeit.',
             ],
+            '/leistungen/wartung-hosting' => [
+                'name' => 'Wartung & Hosting für Websites und Shops',
+                'serviceType' => 'Website-Wartung, Hosting, Monitoring, Backups und Recovery',
+                'description' => 'Waldbyte betreut Websites, Shops und Portale mit Updates, Monitoring, Backups, Recovery-Prozessen und Hosting.',
+                'areaServed' => [
+                    'Deutschland',
+                    'Region Karlsruhe',
+                ],
+            ],
             '/technologien/typo3' => [
                 'name' => 'TYPO3 Agentur für Installation, Extensions und Support',
                 'serviceType' => 'TYPO3 Agentur',
@@ -195,7 +204,7 @@ final class StructuredDataRenderer
             'provider' => [
                 '@id' => $organizationId,
             ],
-            'areaServed' => 'Deutschland',
+            'areaServed' => $service['areaServed'] ?? 'Deutschland',
             'url' => $currentUrl,
         ];
     }
