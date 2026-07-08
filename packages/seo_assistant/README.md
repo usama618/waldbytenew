@@ -81,11 +81,15 @@ vendor/bin/typo3 seo:recommendations:apply --all --yes
 ```
 
 Bulk apply only writes recommendations that are safe for database automation:
-`safe_metadata`, `content_draft`, and `image_alt`. Manual template/schema/indexing items are
-skipped. Content drafts stay hidden unless `--publish-content` is passed.
+`safe_metadata`, `content_draft`, `image_alt`, `indexing_update`, and `structured_data`.
+File/template changes are skipped. CLI-created content stays hidden unless `--publish-content` is
+passed. In the backend module, the Apply buttons publish generated content sections directly.
 
 The backend module also shows an `Apply` button for every automatic recommendation and an
-`Apply all automatic` button above the table.
+`Apply all automatic` button above the table. The buttons can also handle older `manual_review`
+rows when the extension can convert them safely from their recommendation type, for example long
+titles, long meta descriptions, thin content, missing H1, indexing/canonical suggestions and
+structured-data suggestions.
 
 Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
 recommendations create a hidden `seo_text` element by default:
@@ -113,3 +117,7 @@ Before showing or bulk-applying rows, the extension checks whether a recommendat
 implemented. It hides rows when the current TYPO3 metadata already matches, suggested content is
 already visible, image alt text is already stored on matching file references, or the requested
 JSON-LD type is already present in the latest rendered snapshot.
+
+Structured-data recommendations are stored in `tx_seoassistant_structured_data` and rendered by the
+site package JSON-LD renderer. After deploying this feature, run TYPO3 extension setup/database
+analysis once so the new table exists.

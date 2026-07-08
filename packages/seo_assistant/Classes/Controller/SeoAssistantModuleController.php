@@ -71,7 +71,7 @@ final class SeoAssistantModuleController
                     return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
                 }
 
-                $result = $this->recommendationApplyService->apply($uid, false, false, false, 'seo_text');
+                $result = $this->recommendationApplyService->apply($uid, false, true, true, 'seo_text');
                 if (($result['alreadyImplemented'] ?? false) === true) {
                     return [
                         'type' => 'success',
@@ -81,13 +81,13 @@ final class SeoAssistantModuleController
 
                 return [
                     'type' => 'success',
-                    'message' => 'Recommendation #' . $uid . ' applied. Content recommendations are created as hidden drafts.',
+                    'message' => 'Recommendation #' . $uid . ' applied.',
                 ];
             }
 
             if ($action === 'applyAllRecommendations') {
                 $limit = max(1, min(500, (int)($parsedBody['limit'] ?? 100)));
-                $result = $this->recommendationApplyService->applyAll(false, false, false, 'seo_text', $limit);
+                $result = $this->recommendationApplyService->applyAll(false, true, true, 'seo_text', $limit);
 
                 return [
                     'type' => $result['failed'] > 0 ? 'error' : 'success',
@@ -194,6 +194,7 @@ final class SeoAssistantModuleController
             self::RENDERED_SNAPSHOT_TABLE,
             self::RECOMMENDATION_TABLE,
             self::AI_RUN_TABLE,
+            'tx_seoassistant_structured_data',
         ];
 
         return array_values(array_diff($requiredTables, $tableNames));
@@ -834,7 +835,7 @@ final class SeoAssistantModuleController
             . '<input type="hidden" name="action" value="applyAllRecommendations">'
             . '<button class="button" type="submit">Apply all automatic</button>'
             . '<label class="muted">Limit <input type="number" name="limit" value="100" min="1" max="500"></label>'
-            . '<span class="muted">Applies metadata, content drafts and image alt text. Manual template/schema items are skipped.</span>'
+            . '<span class="muted">Applies metadata, published content sections, image alt text, indexing fields and DB-backed schema. File/template changes are skipped.</span>'
             . '</form>';
     }
 
@@ -960,6 +961,8 @@ final class SeoAssistantModuleController
         if (!is_array($payload)) {
             $payload = [];
         }
+        $normalizedAction = $this->recommendationApplyService->actionForRecommendation($row);
+        $displayPayload = $normalizedAction['payload'];
 
         $metadata = '';
         if ((string)($row['proposed_seo_title'] ?? '') !== '') {
@@ -968,70 +971,67 @@ final class SeoAssistantModuleController
         if ((string)($row['proposed_description'] ?? '') !== '') {
             $metadata .= '<strong>Description:</strong> ' . $this->escape((string)$row['proposed_description']);
         }
+        if ($metadata === '' && ($normalizedAction['seoTitle'] !== '' || $normalizedAction['description'] !== '')) {
+            if ($normalizedAction['seoTitle'] !== '') {
+                $metadata .= '<strong>Title:</strong> ' . $this->escape($normalizedAction['seoTitle']) . '<br>';
+            }
+            if ($normalizedAction['description'] !== '') {
+                $metadata .= '<strong>Description:</strong> ' . $this->escape($normalizedAction['description']);
+            }
+        }
         if (
             $metadata === ''
             && (
-                (string)($payload['content_element_header'] ?? '') !== ''
-                || (string)($payload['content_body_html'] ?? '') !== ''
-                || (string)($payload['content_brief'] ?? '') !== ''
-                || ($payload['suggested_headings'] ?? []) !== []
+                (string)($displayPayload['content_element_header'] ?? '') !== ''
+                || (string)($displayPayload['content_body_html'] ?? '') !== ''
+                || (string)($displayPayload['content_brief'] ?? '') !== ''
+                || ($displayPayload['suggested_headings'] ?? []) !== []
             )
         ) {
-            $contentHeader = (string)($payload['content_element_header'] ?? '');
-            if ($contentHeader === '' && is_array($payload['suggested_headings'] ?? null)) {
-                $contentHeader = (string)($payload['suggested_headings'][0] ?? '');
+            $contentHeader = (string)($displayPayload['content_element_header'] ?? '');
+            if ($contentHeader === '' && is_array($displayPayload['suggested_headings'] ?? null)) {
+                $contentHeader = (string)($displayPayload['suggested_headings'][0] ?? '');
             }
-            $contentPreview = (string)($payload['content_body_html'] ?? '');
+            $contentPreview = (string)($displayPayload['content_body_html'] ?? '');
             if ($contentPreview === '') {
-                $contentPreview = (string)($payload['content_brief'] ?? '');
+                $contentPreview = (string)($displayPayload['content_brief'] ?? '');
             }
-            $metadata = '<strong>Content:</strong> ' . $this->escape($contentHeader !== '' ? $contentHeader : 'Hidden draft')
+            $metadata = '<strong>Content:</strong> ' . $this->escape($contentHeader !== '' ? $contentHeader : 'Generated content')
                 . '<br><span class="muted">' . $this->escape($this->shorten($this->cleanPreviewText($contentPreview), 120)) . '</span>';
+        } elseif ($metadata === '' && (string)($displayPayload['structured_data_type'] ?? '') !== '') {
+            $metadata = '<strong>Schema:</strong> ' . $this->escape((string)$displayPayload['structured_data_type']);
+        } elseif ($metadata === '' && ((string)($displayPayload['canonical_link'] ?? '') !== '' || array_key_exists('no_index', $displayPayload))) {
+            $parts = [];
+            if (array_key_exists('no_index', $displayPayload)) {
+                $parts[] = 'no_index: ' . (int)$displayPayload['no_index'];
+            }
+            if ((string)($displayPayload['canonical_link'] ?? '') !== '') {
+                $parts[] = 'canonical: ' . (string)$displayPayload['canonical_link'];
+            }
+            $metadata = '<strong>Indexing:</strong> ' . $this->escape(implode(', ', $parts));
         }
         if ($metadata === '') {
             $metadata = '<span class="muted">Manual review</span>';
         }
 
-        $legacySafeMetadata = (string)($row['action_type'] ?? '') === ''
-            && ((string)($row['proposed_seo_title'] ?? '') !== '' || (string)($row['proposed_description'] ?? '') !== '');
-        $applyCapability = (string)($row['apply_capability'] ?? '');
-        if (
-            ($applyCapability === '' || $applyCapability === 'manual')
-            && (string)($row['action_type'] ?? '') === 'content_gap_brief'
-            && (
-                (string)($payload['content_body_html'] ?? '') !== ''
-                || (string)($payload['content_brief'] ?? '') !== ''
-                || ($payload['suggested_headings'] ?? []) !== []
-            )
-        ) {
-            $applyCapability = 'content_draft';
-        }
-        if (
-            ($applyCapability === '' || $applyCapability === 'manual')
-            && (string)($row['action_type'] ?? '') === 'image_alt_suggestion'
-            && ($payload['image_alt_suggestions'] ?? []) !== []
-        ) {
-            $applyCapability = 'image_alt';
-        }
-        if ($applyCapability === 'safe_metadata' || $legacySafeMetadata) {
+        $applyCapability = $normalizedAction['applyCapability'];
+        if ($applyCapability === 'safe_metadata') {
             $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
             $secondCommand = (string)($row['status'] ?? '') === 'applied'
                 ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
                 : 'Apply first';
-        } elseif ($applyCapability === 'content_draft' || $applyCapability === 'image_alt') {
+        } elseif (in_array($applyCapability, ['content_draft', 'image_alt', 'indexing_update', 'structured_data'], true)) {
             $applyCommand = 'vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes';
-            $secondCommand = $applyCapability === 'content_draft'
-                ? 'Publish directly: vendor/bin/typo3 seo:recommendations:apply --uid=' . (int)$row['uid'] . ' --yes --publish-content'
-                : ((string)($row['status'] ?? '') === 'applied'
-                    ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
-                    : 'Apply first');
+            $secondCommand = (string)($row['status'] ?? '') === 'applied'
+                ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
+                : 'Apply first';
         } else {
             $applyCommand = 'Manual content/template change';
             $secondCommand = (string)($row['status'] ?? '') === 'applied'
                 ? 'vendor/bin/typo3 seo:recommendations:verify --uid=' . (int)$row['uid'] . ' --refresh'
                 : 'Apply first';
         }
-        $canApplyAutomatically = $legacySafeMetadata || in_array($applyCapability, ['safe_metadata', 'content_draft', 'image_alt'], true);
+        $canApplyAutomatically = in_array($applyCapability, ['safe_metadata', 'content_draft', 'image_alt', 'indexing_update', 'structured_data'], true);
         $applyControl = $canApplyAutomatically
             ? '<form method="post" class="inline-form">'
                 . '<input type="hidden" name="formToken" value="' . $this->escape($formToken) . '">'
@@ -1063,48 +1063,24 @@ final class SeoAssistantModuleController
      */
     private function renderActionSummary(array $row): string
     {
-        $actionType = (string)($row['action_type'] ?? '');
-        if ($actionType === '') {
-            $actionType = ((string)($row['proposed_seo_title'] ?? '') !== '' || (string)($row['proposed_description'] ?? '') !== '')
-                ? 'metadata_update'
-                : 'manual_review';
-        }
-        $capability = (string)($row['apply_capability'] ?? 'manual');
-        if ($capability === 'manual' && (string)($row['action_type'] ?? '') === '' && $actionType === 'metadata_update') {
-            $capability = 'safe_metadata';
-        }
-        $payload = json_decode((string)($row['action_payload_json'] ?? '{}'), true);
-        if (!is_array($payload)) {
-            $payload = [];
-        }
-        if (
-            ($capability === '' || $capability === 'manual')
-            && $actionType === 'content_gap_brief'
-            && (
-                (string)($payload['content_body_html'] ?? '') !== ''
-                || (string)($payload['content_brief'] ?? '') !== ''
-                || ($payload['suggested_headings'] ?? []) !== []
-            )
-        ) {
-            $capability = 'content_draft';
-        }
-        if (
-            ($capability === '' || $capability === 'manual')
-            && $actionType === 'image_alt_suggestion'
-            && ($payload['image_alt_suggestions'] ?? []) !== []
-        ) {
-            $capability = 'image_alt';
-        }
+        $action = $this->recommendationApplyService->actionForRecommendation($row);
+        $actionType = $action['actionType'];
+        $capability = $action['applyCapability'];
+        $payload = $action['payload'];
 
         $details = '';
         if ((string)($payload['content_element_header'] ?? '') !== '') {
             $details = '<br><span class="muted">' . $this->escape($this->shorten((string)$payload['content_element_header'], 120)) . '</span>';
         } elseif ((string)($payload['content_brief'] ?? '') !== '') {
             $details = '<br><span class="muted">' . $this->escape($this->shorten((string)$payload['content_brief'], 120)) . '</span>';
+        } elseif ((string)($payload['canonical_link'] ?? '') !== '') {
+            $details = '<br><span class="muted">Canonical: ' . $this->escape((string)$payload['canonical_link']) . '</span>';
         } elseif ((string)($payload['structured_data_type'] ?? '') !== '') {
             $details = '<br><span class="muted">Schema: ' . $this->escape((string)$payload['structured_data_type']) . '</span>';
         } elseif (($payload['image_alt_suggestions'] ?? []) !== [] && is_array($payload['image_alt_suggestions'])) {
             $details = '<br><span class="muted">Images: ' . count($payload['image_alt_suggestions']) . '</span>';
+        } elseif (array_key_exists('no_index', $payload)) {
+            $details = '<br><span class="muted">no_index: ' . (int)$payload['no_index'] . '</span>';
         }
 
         return '<span class="pill">' . $this->escape($actionType) . '</span><br><span class="muted">' . $this->escape($capability) . '</span>' . $details;

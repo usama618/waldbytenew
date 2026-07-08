@@ -176,3 +176,24 @@ CREATE TABLE tx_seoassistant_ai_run (
     KEY crdate (crdate),
     KEY mode (mode)
 );
+
+CREATE TABLE tx_seoassistant_structured_data (
+    uid int(11) unsigned NOT NULL auto_increment,
+    pid int(11) DEFAULT '0' NOT NULL,
+    tstamp int(11) unsigned DEFAULT '0' NOT NULL,
+    crdate int(11) unsigned DEFAULT '0' NOT NULL,
+    page_uid int(11) unsigned DEFAULT '0' NOT NULL,
+    page_url varchar(2048) DEFAULT '' NOT NULL,
+    schema_type varchar(64) DEFAULT '' NOT NULL,
+    json_ld mediumtext,
+    source_recommendation int(11) unsigned DEFAULT '0' NOT NULL,
+    enabled tinyint(4) unsigned DEFAULT '1' NOT NULL,
+    schema_hash varchar(64) DEFAULT '' NOT NULL,
+
+    PRIMARY KEY (uid),
+    UNIQUE KEY schema_hash (schema_hash),
+    KEY page_uid (page_uid),
+    KEY page_url (page_url(191)),
+    KEY schema_type (schema_type),
+    KEY enabled (enabled)
+);

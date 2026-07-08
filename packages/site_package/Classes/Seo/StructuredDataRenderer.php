@@ -130,6 +130,10 @@ final class StructuredDataRenderer
             $graph[] = $faq;
         }
 
+        foreach ($this->dynamicStructuredData((int)$page['uid'], $currentUrl) as $dynamicSchema) {
+            $graph[] = $dynamicSchema;
+        }
+
         if ((int)($page['doktype'] ?? 0) === 137) {
             $graph[] = $this->blogPosting($page, $currentUrl, $organizationId, $websiteId, $site);
         }
@@ -427,6 +431,44 @@ final class StructuredDataRenderer
             '@id' => $this->pageUrl($site, (int)$currentPage['uid']) . '#breadcrumb',
             'itemListElement' => $items,
         ];
+    }
+
+    /**
+     * @return list<array<string,mixed>>
+     */
+    private function dynamicStructuredData(int $pageId, string $currentUrl): array
+    {
+        $connection = GeneralUtility::makeInstance(ConnectionPool::class)
+            ->getConnectionForTable('tx_seoassistant_structured_data');
+        $tableNames = $connection->getSchemaInformation()->listTableNames();
+        if (!in_array('tx_seoassistant_structured_data', $tableNames, true)) {
+            return [];
+        }
+
+        $queryBuilder = $connection->createQueryBuilder();
+        $rows = $queryBuilder
+            ->select('json_ld')
+            ->from('tx_seoassistant_structured_data')
+            ->where(
+                $queryBuilder->expr()->eq('enabled', $queryBuilder->createNamedParameter(1, ParameterType::INTEGER)),
+                $queryBuilder->expr()->or(
+                    $queryBuilder->expr()->eq('page_uid', $queryBuilder->createNamedParameter($pageId, ParameterType::INTEGER)),
+                    $queryBuilder->expr()->eq('page_url', $queryBuilder->createNamedParameter($currentUrl))
+                )
+            )
+            ->orderBy('crdate', 'ASC')
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $items = [];
+        foreach ($rows as $row) {
+            $decoded = json_decode((string)($row['json_ld'] ?? ''), true);
+            if (is_array($decoded) && $decoded !== []) {
+                $items[] = $decoded;
+            }
+        }
+
+        return $items;
     }
 
     private function pageTitle(array $page): string

@@ -123,13 +123,17 @@ vendor/bin/typo3 seo:recommendations:apply --all
 vendor/bin/typo3 seo:recommendations:apply --all --yes
 ```
 
-`--all` is intentionally conservative. It applies only `safe_metadata`, `content_draft`, and
-`image_alt` recommendations. Manual template/schema/internal-link/indexing suggestions are
-reported as skipped. Content recommendations create hidden drafts unless `--publish-content` is
-also passed.
+`--all` is intentionally conservative. It applies only database-backed changes:
+`safe_metadata`, `content_draft`, `image_alt`, `indexing_update`, and `structured_data`.
+File/template changes are reported as skipped. Content recommendations create hidden drafts unless
+`--publish-content` is also passed.
 
-The backend module `Web > SEO Assistant` has the same behavior: every automatic recommendation has
-an `Apply` button, and the recommendations table has an `Apply all automatic` button.
+The backend module `Web > SEO Assistant` has the same behavior, but the buttons are optimized for
+one-click use: every automatic recommendation has an `Apply` button, and the recommendations table
+has an `Apply all automatic` button. Backend apply publishes generated content sections directly.
+It can also convert older `manual_review` rows when they are database-backed, such as long title,
+long description, thin content, missing H1, internal-link content blocks, indexing/canonical fields
+and dynamic structured-data rows.
 
 For metadata recommendations, the second command writes `pages.seo_title` and/or
 `pages.description`, records the applied field values, and sets verification to pending.
@@ -164,6 +168,10 @@ The recommendation table hides rows that are already implemented. The check uses
 metadata, visible content text, matched file-reference alt text, and the latest rendered JSON-LD
 snapshot where applicable. Bulk apply also marks already satisfied recommendations as implemented
 instead of writing them again.
+
+Dynamic structured data is stored in `tx_seoassistant_structured_data` and rendered through the
+site-package JSON-LD renderer. After deploying a version that adds this table, run TYPO3 extension
+setup/database analysis once on the target environment.
 
 ## Suggested cron
 
