@@ -37,7 +37,7 @@ final class RecommendationsApplyCommand extends Command
             ->addOption('limit', null, InputOption::VALUE_REQUIRED, 'Maximum recommendations for --all.', '100')
             ->addOption('yes', null, InputOption::VALUE_NONE, 'Actually write the change. Without this option, the command is a dry run.')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Allow applying non-draft/non-approved recommendations or publishing fallback content.')
-            ->addOption('publish-content', null, InputOption::VALUE_NONE, 'Publish created content elements immediately. Without this option, content is created hidden.')
+            ->addOption('publish-content', null, InputOption::VALUE_NONE, 'Publish content for single --uid applies. --all publishes automatic content when guardrails pass.')
             ->addOption('content-ctype', null, InputOption::VALUE_REQUIRED, 'CType to use for content-gap recommendations.', 'seo_text');
     }
 
@@ -140,7 +140,7 @@ final class RecommendationsApplyCommand extends Command
             $result = $this->recommendationApplyService->applyAll(
                 !(bool)$input->getOption('yes'),
                 (bool)$input->getOption('force'),
-                (bool)$input->getOption('publish-content'),
+                true,
                 (string)$input->getOption('content-ctype'),
                 (int)$input->getOption('limit'),
             );
@@ -155,7 +155,7 @@ final class RecommendationsApplyCommand extends Command
                     'limit' => (int)$input->getOption('limit'),
                     'dry_run' => !(bool)$input->getOption('yes'),
                     'force' => (bool)$input->getOption('force'),
-                    'publish_content' => (bool)$input->getOption('publish-content'),
+                    'publish_content' => true,
                 ],
                 'error'
             );
@@ -211,7 +211,7 @@ final class RecommendationsApplyCommand extends Command
         }
 
         if ($result['dryRun']) {
-            $io->note('Run again with --all --yes to write automatic changes. Content recommendations create hidden elements unless --publish-content is also passed.');
+            $io->note('Run again with --all --yes to write automatic changes. Content recommendations are published when they pass quality guardrails.');
         }
 
         return $result['failed'] > 0 ? Command::FAILURE : Command::SUCCESS;

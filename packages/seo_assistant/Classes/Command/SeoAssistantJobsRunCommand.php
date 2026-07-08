@@ -132,7 +132,7 @@ final class SeoAssistantJobsRunCommand extends Command
     {
         $limit = max(1, min(500, (int)($payload['limit'] ?? 100)));
         $contentCType = trim((string)($payload['contentCType'] ?? 'seo_text'));
-        $result = $this->recommendationApplyService->applyAll(false, false, false, $contentCType !== '' ? $contentCType : 'seo_text', $limit);
+        $result = $this->recommendationApplyService->applyAll(false, false, true, $contentCType !== '' ? $contentCType : 'seo_text', $limit);
         $historyUid = $this->applyHistoryService->record(
             'applyAllRecommendations',
             'Apply all automatic recommendations',

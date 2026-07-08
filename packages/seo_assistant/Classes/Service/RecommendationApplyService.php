@@ -778,11 +778,8 @@ final class RecommendationApplyService
         }
 
         $contentDraft = $this->buildContentDraft($recommendation, $action);
-        if ($publishContent && !$contentDraft['hasReadyBody'] && !$force) {
-            throw new RuntimeException('Publishing content requires an AI content_body_html payload. Run AI generation again, or use --force to publish the fallback draft.', 1760000049);
-        }
         if ($publishContent && !$force && !in_array((string)($recommendation['quality_status'] ?? ''), ['passed', 'warning'], true)) {
-            throw new RuntimeException('Publishing visible content requires a passed recommendation quality check. Apply as a hidden draft or use --force intentionally.', 1760000070);
+            throw new RuntimeException('Publishing visible content requires a passed recommendation quality check. Run generation again or use --force intentionally.', 1760000070);
         }
 
         $contentCType = $this->normalizeCType($contentCType);

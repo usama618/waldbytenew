@@ -139,18 +139,26 @@ vendor/bin/typo3 seo:recommendations:apply --all
 vendor/bin/typo3 seo:recommendations:apply --all --yes
 ```
 
+For hands-off scheduled automation, generation can immediately run the same safe automatic apply
+step:
+
+```bash
+vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5 --apply-automatic --apply-limit=100
+```
+
 `--all` is intentionally conservative. It applies only database-backed changes:
 `safe_metadata`, `content_draft`, `image_alt`, `indexing_update`, and `structured_data`.
-File/template changes are reported as skipped. Content recommendations create hidden drafts unless
-`--publish-content` is also passed.
+File/template changes are reported as skipped. Bulk automatic apply publishes generated content
+when the recommendation passes quality guardrails. Single `--uid` CLI apply creates hidden content
+drafts unless `--publish-content` is also passed.
 
 The backend module `Web > SEO Assistant` has the same behavior, but the buttons are optimized for
 one-click use: every automatic recommendation has an `Apply` button, and the recommendations table
 has an `Apply all automatic` button. Every row also has a `Reject` button. Rejected rows are marked
 `rejected`, hidden from the table, and excluded from `Apply all automatic`. Single backend apply
 runs immediately. Backend `Apply all automatic` is queued and processed by `seo:jobs:run`, then
-writes a normal apply-history entry. Backend apply creates generated content as hidden drafts;
-immediate publishing remains a deliberate CLI action with `--publish-content`. Older
+writes a normal apply-history entry. Backend apply and scheduled `--apply-automatic` create generated
+content as active frontend content after the recommendation passes guardrails. Older
 `manual_review` rows are no longer force-applied from the UI. Use the CLI with `--force` only when
 you intentionally want to convert a legacy database-backed row.
 
@@ -202,9 +210,9 @@ To publish the new content immediately:
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes --publish-content
 ```
 
-Publishing requires AI-generated `content_body_html`. Older/rule-based recommendations can still
-create hidden drafts; use `--force --publish-content` only if you intentionally want to publish the
-fallback draft body.
+Publishing requires a passed recommendation quality check. Older/manual recommendations can still
+create hidden drafts; use `--force --publish-content` only if you intentionally want to publish an
+older fallback body.
 
 After applying metadata, verify against the rendered frontend output:
 
@@ -284,7 +292,7 @@ vendor/bin/typo3 seo:gsc:sync
 vendor/bin/typo3 seo:pages:snapshot --base-url=https://waldbyte.de/
 vendor/bin/typo3 seo:gsc:analyze-trends --sync
 vendor/bin/typo3 seo:rendered:snapshot --base-url=https://waldbyte.de/
-vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5
+vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5 --apply-automatic --apply-limit=100
 vendor/bin/typo3 seo:jobs:run --limit=5
 vendor/bin/typo3 seo:recommendations:verify --all
 vendor/bin/typo3 seo:recommendations:evaluate-impact --sync --stage=early

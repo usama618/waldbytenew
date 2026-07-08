@@ -96,7 +96,7 @@ final class SeoAssistantModuleController
                     return ['type' => 'error', 'message' => 'No recommendation uid was provided.'];
                 }
 
-                $result = $this->recommendationApplyService->apply($uid, false, false, false, 'seo_text');
+                $result = $this->recommendationApplyService->apply($uid, false, false, true, 'seo_text');
                 $alreadyImplemented = ($result['alreadyImplemented'] ?? false) === true;
                 $historyUid = $this->applyHistoryService->record(
                     'applyRecommendation',
@@ -1163,7 +1163,7 @@ final class SeoAssistantModuleController
             . '<input type="hidden" name="action" value="applyAllRecommendations">'
             . '<button class="button" type="submit">Apply all automatic</button>'
             . '<label class="muted">Limit <input type="number" name="limit" value="100" min="1" max="500"></label>'
-            . '<span class="muted">Applies metadata, published content sections, image alt text, indexing fields and DB-backed schema. File/template changes are skipped.</span>'
+            . '<span class="muted">Applies metadata, active content sections, image alt text, indexing fields and DB-backed schema. File/template changes are skipped.</span>'
             . '</form>';
     }
 

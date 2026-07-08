@@ -96,20 +96,27 @@ vendor/bin/typo3 seo:recommendations:apply --all
 vendor/bin/typo3 seo:recommendations:apply --all --yes
 ```
 
+For scheduled automation, recommendation generation can run the same safe automatic apply step
+immediately after new drafts are generated:
+
+```bash
+vendor/bin/typo3 seo:recommendations:generate --limit=100 --ai-limit=5 --apply-automatic --apply-limit=100
+```
+
 Bulk apply only writes recommendations that are safe for database automation:
 `safe_metadata`, `content_draft`, `image_alt`, `indexing_update`, and `structured_data`.
-File/template changes are skipped. CLI-created content stays hidden unless `--publish-content` is
-passed. In the backend module, the Apply buttons publish generated content sections directly.
+File/template changes are skipped. Bulk automatic apply publishes generated content when the
+recommendation passes guardrails. Single `--uid` CLI-created content stays hidden unless
+`--publish-content` is passed.
 
 The backend module also shows an `Apply` button for every automatic recommendation and an
 `Apply all automatic` button above the table. Every row also has a `Reject` button. Rejected
 recommendations are marked `rejected`, hidden from the table, and excluded from future bulk apply
 runs. Single backend apply runs immediately. Backend `Apply all automatic` is queued and processed
-by `seo:jobs:run`, then writes a normal apply-history entry. Backend apply uses the same
-conservative defaults as the CLI: generated content is created as a hidden draft unless an operator
-intentionally publishes from the CLI with `--publish-content`. Older `manual_review` rows are no
-longer force-applied from the UI; use the CLI with `--force` only when you intentionally want to
-convert a legacy row.
+by `seo:jobs:run`, then writes a normal apply-history entry. Backend apply and scheduled
+`--apply-automatic` publish generated content when the recommendation passes guardrails. Older
+`manual_review` rows are no longer force-applied from the UI; use the CLI with `--force` only when
+you intentionally want to convert a legacy row.
 
 Recommendation statuses are `draft`, `approved`, `applied`, `verified`, `evaluating`, `improved`,
 `neutral`, `declined`, `rejected`, and `rolled_back`.
@@ -135,15 +142,15 @@ vendor/bin/typo3 seo:jobs:run --limit=5
 
 The backend shows recent queued jobs with status, attempts, start/finish times and failure messages.
 
-Metadata recommendations update `pages.seo_title` and `pages.description`. Content-gap
+Metadata recommendations update `pages.seo_title` and `pages.description`. Direct CLI content-gap
 recommendations create a hidden `seo_text` element by default:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes
 ```
 
-To publish the created content immediately, pass `--publish-content`. Publishing requires an
-AI-generated `content_body_html` payload unless `--force` is also passed:
+To publish the created content immediately, pass `--publish-content`. Publishing requires a passed
+recommendation quality check unless `--force` is also passed:
 
 ```bash
 vendor/bin/typo3 seo:recommendations:apply --uid=123 --yes --publish-content
