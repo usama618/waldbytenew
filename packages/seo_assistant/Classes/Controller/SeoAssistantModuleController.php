@@ -275,6 +275,8 @@ final class SeoAssistantModuleController
             . '.stat{background:#fff;border:1px solid #d9dde3;border-radius:6px;padding:14px;}'
             . '.stat strong{display:block;font-size:22px;margin-top:4px;}'
             . '.panel{background:#fff;border:1px solid #d9dde3;border-radius:6px;overflow:hidden;margin-bottom:24px;}'
+            . '.table-scroll{max-width:100%;overflow-x:auto;}'
+            . '.recommendations-table{min-width:1500px;}'
             . 'table{width:100%;border-collapse:collapse;}'
             . 'th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #e3e6ea;font-size:13px;}'
             . 'th{font-weight:700;background:#eef1f4;}'
@@ -320,7 +322,7 @@ final class SeoAssistantModuleController
             . '<div class="panel">' . $this->renderApplyHistoryTable($applyHistory) . '</div>'
             . '<h2>Recommendations</h2>'
             . $this->renderRecommendationActions($formToken)
-            . '<div class="panel">' . $this->renderRecommendationsTable($recommendations, $formToken) . '</div>'
+            . '<div class="panel table-scroll">' . $this->renderRecommendationsTable($recommendations, $formToken) . '</div>'
             . '<h2>Rendered URL Audit</h2>'
             . '<div class="panel">' . $this->renderRenderedSnapshotsTable($renderedSnapshots) . '</div>'
             . '<h2>CMS Content Snapshots</h2>'
@@ -1157,7 +1159,7 @@ final class SeoAssistantModuleController
      */
     private function renderRecommendationsTable(array $recommendations, string $formToken): string
     {
-        return '<table><thead><tr>'
+        return '<table class="recommendations-table"><thead><tr>'
             . '<th>UID</th><th>Priority</th><th>Status</th><th>Type</th><th>Action</th><th>Page</th><th>Query</th><th>Issue</th><th>Recommendation</th><th>Proposed Metadata</th><th>Verification</th><th>Actions</th><th>Command</th>'
             . '</tr></thead><tbody>'
             . ($recommendations === [] ? '<tr><td colspan="13" class="muted">No recommendations need action. Run the snapshot and generate commands when you want a fresh audit.</td></tr>' : '')
