@@ -385,3 +385,6 @@ $additionalColumns = [
 ];
 
 ExtensionManagementUtility::addTCAcolumns('tt_content', $additionalColumns);
+
+// The dedicated "Header Only" element represents the page's primary heading.
+$GLOBALS['TCA']['tt_content']['types']['header']['columnsOverrides']['header_layout']['config']['default'] = 1;

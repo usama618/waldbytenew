@@ -1,0 +1,2 @@
+# Use H1 when the dedicated "Header Only" element has no explicit heading level.
+tt_content.header.settings.defaultHeaderType = 1
