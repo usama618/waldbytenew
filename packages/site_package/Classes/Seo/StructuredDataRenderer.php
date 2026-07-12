@@ -11,11 +11,14 @@ use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Routing\RouterInterface;
 use TYPO3\CMS\Core\Site\Entity\Site;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
+use TYPO3\CMS\Core\Utility\PathUtility;
 use TYPO3\CMS\Frontend\Page\PageInformation;
 
 #[Autoconfigure(public: true)]
 final class StructuredDataRenderer
 {
+    private const GEO_BLOG_SLUG = '/blogs/geo-statt-seo-ki-suche-2026';
+
     public function render(string $_, array $configuration, ServerRequestInterface $request): string
     {
         $site = $request->getAttribute('site');
@@ -35,6 +38,10 @@ final class StructuredDataRenderer
                 '@id' => $organizationId,
                 'name' => 'Waldbyte',
                 'url' => 'https://waldbyte.de/',
+                'logo' => [
+                    '@type' => 'ImageObject',
+                    'url' => $this->publicResourceUrl($site, 'EXT:site_package/Resources/Public/Icons/favicon.png'),
+                ],
                 'email' => 'info@waldbyte.de',
                 'telephone' => '+49 176 58824334',
                 'description' => 'Waldbyte entwickelt moderne Websites, TYPO3-Systeme, WordPress-Websites und E-Commerce-Lösungen für Unternehmen in Deutschland und der DACH-Region. Das Unternehmen ist in der TechnologieRegion Karlsruhe ansässig und arbeitet standortunabhängig für professionelle Webprojekte.',
@@ -334,6 +341,28 @@ final class StructuredDataRenderer
                     'answer' => 'Wichtige Hebel sind schnelle Kategorie- und Produktseiten, saubere URLs, strukturierte Produktdaten, interne Verlinkung, technische SEO und ein stabiler Checkout.',
                 ],
             ],
+            self::GEO_BLOG_SLUG => [
+                [
+                    'question' => 'Ist SEO 2026 tot?',
+                    'answer' => 'Nein. SEO ist nicht tot. Die Grundlagen bleiben wichtig: technische Qualität, hilfreiche Inhalte, gute Seitenstruktur, Ladezeit und Indexierbarkeit. GEO erweitert diese Grundlagen um die Frage, ob Inhalte auch für KI-generierte Antworten verständlich, vertrauenswürdig und zitierfähig sind.',
+                ],
+                [
+                    'question' => 'Was ist der Unterschied zwischen SEO und GEO?',
+                    'answer' => 'SEO optimiert Websites für bessere Sichtbarkeit in Suchergebnissen. GEO optimiert Inhalte und technische Struktur zusätzlich dafür, dass KI-Suchsysteme die Website als Quelle verstehen und in generierten Antworten berücksichtigen können.',
+                ],
+                [
+                    'question' => 'Braucht jede Website GEO?',
+                    'answer' => 'Jede Website, die über organische Sichtbarkeit Kunden gewinnen möchte, sollte GEO zumindest berücksichtigen. Besonders wichtig ist es für Unternehmen mit beratungsintensiven Leistungen, Online-Shops, lokalen Dienstleistungen und B2B-Angeboten.',
+                ],
+                [
+                    'question' => 'Reicht es, FAQ-Texte auf die Website zu setzen?',
+                    'answer' => 'Nein. FAQ-Bereiche sind hilfreich, aber GEO braucht mehr: saubere Technik, klare Informationsarchitektur, vertrauenswürdige Inhalte, gute interne Verlinkung, schnelle Ladezeiten und aktuelle Informationen.',
+                ],
+                [
+                    'question' => 'Kann Waldbyte bestehende Websites für GEO verbessern?',
+                    'answer' => 'Ja. Waldbyte kann bestehende Websites technisch und inhaltlich analysieren, Schwachstellen priorisieren und konkrete Verbesserungen umsetzen – von technischer SEO über Seitenstruktur bis zu Performance, Content und Conversion.',
+                ],
+            ],
         ];
 
         $slug = '/' . trim((string)($page['slug'] ?? ''), '/');
@@ -363,6 +392,7 @@ final class StructuredDataRenderer
 
     private function blogPosting(array $page, string $currentUrl, string $organizationId, string $websiteId, Site $site): array
     {
+        $metadata = $this->blogPostingMetadata($page);
         $article = [
             '@type' => 'BlogPosting',
             '@id' => $currentUrl . '#article',
@@ -370,8 +400,8 @@ final class StructuredDataRenderer
             'isPartOf' => [
                 '@id' => $websiteId,
             ],
-            'headline' => $this->pageTitle($page),
-            'description' => (string)($page['description'] ?? ''),
+            'headline' => (string)($metadata['headline'] ?? $this->pageTitle($page)),
+            'description' => (string)($metadata['description'] ?? $page['description'] ?? ''),
             'author' => [
                 '@id' => $organizationId,
             ],
@@ -380,6 +410,10 @@ final class StructuredDataRenderer
             ],
             'inLanguage' => 'de-DE',
         ];
+
+        if (($metadata['keywords'] ?? []) !== []) {
+            $article['keywords'] = $metadata['keywords'];
+        }
 
         $imageUrl = $this->pageImageUrl((int)$page['uid'], $site);
         if ($imageUrl !== null) {
@@ -397,6 +431,35 @@ final class StructuredDataRenderer
         }
 
         return $article;
+    }
+
+    /**
+     * @param array<string,mixed> $page
+     * @return array{headline?:string,description?:string,keywords?:list<string>}
+     */
+    private function blogPostingMetadata(array $page): array
+    {
+        $metadata = [
+            self::GEO_BLOG_SLUG => [
+                'headline' => 'GEO statt nur SEO: Warum Ihre Website 2026 für KI-Suchen optimiert sein muss',
+                'description' => 'Generative Engine Optimization erklärt: Warum klassische SEO 2026 erweitert werden muss und wie Unternehmen ihre Website für Google, ChatGPT Search, Perplexity und KI-Suchsysteme vorbereiten.',
+                'keywords' => [
+                    'GEO',
+                    'Generative Engine Optimization',
+                    'SEO 2026',
+                    'KI-Suche',
+                    'ChatGPT Search',
+                    'Perplexity',
+                    'Google Gemini',
+                    'technische SEO',
+                    'Waldbyte',
+                ],
+            ],
+        ];
+
+        $slug = '/' . trim((string)($page['slug'] ?? ''), '/');
+
+        return $metadata[$slug] ?? [];
     }
 
     private function breadcrumb(PageInformation $pageInformation, Site $site): ?array
@@ -479,6 +542,13 @@ final class StructuredDataRenderer
     private function pageUrl(Site $site, int $pageId): string
     {
         return (string)$site->getRouter()->generateUri($pageId, [], '', RouterInterface::ABSOLUTE_URL);
+    }
+
+    private function publicResourceUrl(Site $site, string $resourcePath): string
+    {
+        $webPath = PathUtility::getPublicResourceWebPath($resourcePath, false);
+
+        return rtrim((string)$site->getBase(), '/') . '/' . ltrim($webPath, '/');
     }
 
     private function pageImageUrl(int $pageId, Site $site): ?string
