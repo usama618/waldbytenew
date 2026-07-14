@@ -90,7 +90,7 @@ final class StructuredDataRenderer
                             '@type' => 'Offer',
                             'itemOffered' => [
                                 '@type' => 'Service',
-                                'name' => 'PrestaShop Updates, Module, Migration und EU-Compliance Funktionen',
+                                'name' => 'PrestaShop Updates, Upgrades, Migration, Wartung und technische Shop-Betreuung',
                             ],
                         ],
                         [
@@ -194,9 +194,9 @@ final class StructuredDataRenderer
                 'description' => 'Moderne WordPress-Websites mit sauberer Struktur, schneller Performance, DSGVO-Basis und einfacher Pflege.',
             ],
             '/technologien/prestashop' => [
-                'name' => 'PrestaShop Agentur für Module, Updates und Migration',
+                'name' => 'PrestaShop Update und Migration Agentur',
                 'serviceType' => 'PrestaShop Agentur',
-                'description' => 'PrestaShop Entwicklung, Module, Updates, Migration, EU-Compliance, Widerrufsbutton, Checkout-Optimierung und technische Shop-Betreuung.',
+                'description' => 'PrestaShop aktualisieren, Updates, Upgrades, Migration, PHP-Kompatibilität, Modulprüfung, Staging, Backups, Rollback und technische Shop-Betreuung.',
             ],
         ];
 
@@ -321,24 +321,24 @@ final class StructuredDataRenderer
                     'answer' => 'Ja. Waldbyte prüft Version, Module, Theme, PHP-Kompatibilität und Datenbank und plant Updates mit Testumgebung und Backup-Strategie.',
                 ],
                 [
-                    'question' => 'Entwickelt Waldbyte individuelle PrestaShop Module?',
-                    'answer' => 'Ja. Waldbyte entwickelt Module für Schnittstellen, Produktlogik, Checkout, Backend-Prozesse, B2B-Funktionen und individuelle Workflows.',
+                    'question' => 'Kann Waldbyte PrestaShop 1.7 auf 8 oder 9.x migrieren?',
+                    'answer' => 'Ja. Waldbyte prüft Module, Theme, Overrides, PHP-Version und Datenbank, baut eine Testumgebung auf und migriert den Shop kontrolliert.',
                 ],
                 [
-                    'question' => 'Kann Waldbyte einen Widerrufsbutton in PrestaShop umsetzen?',
-                    'answer' => 'Ja. Waldbyte unterstützt bei der technischen Umsetzung einer elektronischen Widerrufsfunktion inklusive Bestellzuordnung, Formularlogik, E-Mail-Bestätigung und Backend-Prozess.',
+                    'question' => 'Was passiert, wenn PrestaShop Module nach dem Update defekt sind?',
+                    'answer' => 'Waldbyte analysiert Logs, Abhängigkeiten, Overrides, Theme-Anpassungen und Kompatibilität und aktualisiert, ersetzt oder korrigiert betroffene Module.',
                 ],
                 [
-                    'question' => 'Migriert Waldbyte von anderen Shopsystemen zu PrestaShop?',
-                    'answer' => 'Ja. Waldbyte plant Migrationen von Produktdaten, Kategorien, Kunden, Bestellungen, Bildern, URLs, SEO-Daten und Weiterleitungen.',
+                    'question' => 'Wie schützt Waldbyte SEO bei einer PrestaShop Migration?',
+                    'answer' => 'Waldbyte prüft Produkte, Kategorien, URLs, Metadaten, Canonicals, interne Verlinkung und Redirects, damit wichtige Einstiegsseiten erreichbar bleiben.',
                 ],
                 [
-                    'question' => 'Kann Waldbyte auch von PrestaShop zu einem anderen Shopsystem migrieren?',
-                    'answer' => 'Ja. Wenn ein anderes System strategisch besser passt, unterstützt Waldbyte beim Wechsel und achtet auf Datenqualität, Redirects, SEO und stabile Prozesse.',
+                    'question' => 'Kann Waldbyte eine alte PrestaShop Version aktualisieren?',
+                    'answer' => 'Ja. Waldbyte analysiert Version, PHP-Stand, Module, Theme und individuelle Anpassungen und empfiehlt dann den sinnvollen Update- oder Migrationspfad.',
                 ],
                 [
-                    'question' => 'Wie wird ein PrestaShop sichtbarer?',
-                    'answer' => 'Wichtige Hebel sind schnelle Kategorie- und Produktseiten, saubere URLs, strukturierte Produktdaten, interne Verlinkung, technische SEO und ein stabiler Checkout.',
+                    'question' => 'Bietet Waldbyte PrestaShop Wartung und Support an?',
+                    'answer' => 'Ja. Waldbyte unterstützt bei Wartung, Sicherheitsupdates, Performance, Hosting, Fehleranalyse und laufender technischer Shop-Betreuung.',
                 ],
             ],
             self::GEO_BLOG_SLUG => [
