@@ -5,7 +5,7 @@
                 <p class="kicker reveal">{data.header}</p>
             </f:if>
 
-            <div class="projects reveal d2">
+            <div class="projects reveal d2{f:if(condition: '{slides -> f:count()} == 1', then: ' projects--single')}">
                 <f:for each="{slides}" as="slide">
                     <article class="pcard">
                         <f:if condition="{slide.slideImage.0}">

@@ -11,7 +11,7 @@
                 <div class="sub reveal d1"><f:format.html>{data.bodytext}</f:format.html></div>
             </f:if>
 
-            <div class="projects reveal d2">
+            <div class="projects reveal d2{f:if(condition: '{projectCards -> f:count()} == 1', then: ' projects--single')}">
                 <f:for each="{projectCards}" as="card">
                     <article class="pcard">
                         <f:if condition="{card.image.0}">
