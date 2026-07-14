@@ -5,7 +5,7 @@
     --amber:#ffd27d;
     --bg:#04070a;
     --text:#e8f5ee;
-    --dim:#8aa49a;
+    --dim:#a9bfb5;
     --line:rgba(232,245,238,.12);
     --mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
   }
@@ -167,12 +167,24 @@
   .pcard a.plink:hover{color:var(--green);}
 
   /* ---------- PROCESS ---------- */
+  #prozess{isolation:isolate; overflow:hidden;}
+  #prozess::before{
+    content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(ellipse at 50% 58%, rgba(4,7,10,.46) 0%, rgba(4,7,10,.2) 58%, transparent 82%),
+      linear-gradient(180deg, rgba(4,7,10,.32) 0%, rgba(4,7,10,.62) 36%, rgba(4,7,10,.86) 62%, rgba(4,7,10,.72) 100%);
+  }
+  #prozess .wrap{position:relative; z-index:1;}
+  #prozess .wrap::before{display:none;}
   .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:20px; margin-top:50px; counter-reset:step;}
-  .step{position:relative; padding:28px 24px; border-top:1px solid var(--line);}
-  .step .n{font-family:var(--mono); font-size:36px; font-weight:700; color:transparent;
-    -webkit-text-stroke:1px rgba(125,255,176,.5);}
-  .step h3{margin:16px 0 10px;}
-  .step p{color:var(--dim); font-size:14px; line-height:1.7;}
+  .step{position:relative; padding:28px 24px 30px; border-top:1px solid rgba(232,245,238,.24);
+    background:linear-gradient(180deg, rgba(4,7,10,.8), rgba(4,7,10,.56));
+    -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px);}
+  .step .n{font-family:var(--mono); font-size:36px; font-weight:700; color:rgba(125,255,176,.08);
+    -webkit-text-stroke:1px rgba(125,255,176,.78); filter:drop-shadow(0 2px 10px rgba(4,7,10,.95));}
+  .step h3{margin:16px 0 10px; color:#f2faf6; text-shadow:0 2px 16px rgba(4,7,10,.98);}
+  .step p{color:#c6d8cf; font-size:15px; line-height:1.75;
+    text-shadow:0 2px 12px rgba(4,7,10,1), 0 0 24px rgba(4,7,10,.9);}
 
   /* ---------- USP ---------- */
   .usps{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; margin-top:50px;}
